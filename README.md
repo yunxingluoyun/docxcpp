@@ -15,10 +15,10 @@
 
 源码位置：
 
-- 头文件：[cpp/include/docxcpp](/Users/yunxingluoyun/python-docx-master/cpp/include/docxcpp)
-- 实现：[cpp/src](/Users/yunxingluoyun/python-docx-master/cpp/src)
-- 示例：[cpp/examples](/Users/yunxingluoyun/python-docx-master/cpp/examples)
-- 测试：[cpp/tests](/Users/yunxingluoyun/python-docx-master/cpp/tests)
+- 头文件：[cpp/include/docxcpp](./include/docxcpp)
+- 实现：[cpp/src](./src)
+- 示例：[cpp/examples](./examples)
+- 测试：[cpp/tests](./tests)
 
 ## `docxcpp` 当前能力
 
@@ -60,11 +60,11 @@
 
 最小示例：
 
-- [minimal.cpp](/Users/yunxingluoyun/python-docx-master/cpp/examples/minimal.cpp)
+- [minimal.cpp](./examples/minimal.cpp)
 
 完整中文示例：
 
-- [full_feature_5_pages.cpp](/Users/yunxingluoyun/python-docx-master/cpp/examples/full_feature_5_pages.cpp)
+- [full_feature_5_pages.cpp](./examples/full_feature_5_pages.cpp)
 
 这个完整示例会生成一个 5 页中文 `.docx`，覆盖当前已实现的大部分功能。
 
@@ -94,7 +94,7 @@ ctest --test-dir build --output-on-failure
 
 仓库中提供了一个基于 `python-docx` 的验证脚本：
 
-- [validate_full_feature_example.py](/Users/yunxingluoyun/python-docx-master/cpp/tests/validate_full_feature_example.py)
+- [validate_full_feature_example.py](./tests/validate_full_feature_example.py)
 
 运行方式：
 
@@ -116,8 +116,8 @@ python3 cpp/tests/validate_full_feature_example.py build/test-artifacts/full-fea
 
 英文版：
 
-- [CPP_VS_PYTHON_DOCX.md](/Users/yunxingluoyun/python-docx-master/cpp/CPP_VS_PYTHON_DOCX.md)
+- [CPP_VS_PYTHON_DOCX.md](./CPP_VS_PYTHON_DOCX.md)
 
 中文版：
 
-- [CPP_VS_PYTHON_DOCX_CN.md](/Users/yunxingluoyun/python-docx-master/cpp/CPP_VS_PYTHON_DOCX_CN.md)
+- [CPP_VS_PYTHON_DOCX_CN.md](./CPP_VS_PYTHON_DOCX_CN.md)
