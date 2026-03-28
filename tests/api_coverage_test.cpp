@@ -1,10 +1,15 @@
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "docxcpp/document.hpp"
+#include "docxcpp/opc_package.hpp"
+#include "pugixml.hpp"
 
 namespace {
 
@@ -18,6 +23,13 @@ std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
     stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
   }
   return bytes;
+}
+
+std::vector<std::uint8_t> xml_to_bytes(const pugi::xml_document& xml) {
+  std::ostringstream stream;
+  xml.save(stream, "  ", pugi::format_default, pugi::encoding_utf8);
+  const std::string content = stream.str();
+  return std::vector<std::uint8_t>(content.begin(), content.end());
 }
 
 }  // namespace
@@ -77,6 +89,7 @@ int main() {
   docxcpp::Document reopened(output);
   const auto paragraphs = reopened.paragraphs();
   const auto tables = reopened.tables();
+  const auto sections = reopened.sections();
   const auto page_size = reopened.page_size_pt();
   const auto page_orientation = reopened.page_orientation();
   const auto page_margins = reopened.page_margins_pt();
@@ -161,6 +174,17 @@ int main() {
   assert(tables[0].rows()[0].cells()[0].vertical_merge().empty());
   assert(tables[0].rows()[1].cells()[0].text() == "Heading Wrapper\nCellLink");
   assert(tables[0].rows()[1].cells()[1].text().empty());
+  assert(sections.size() == 1);
+  assert(sections[0].page_size_pt().width_pt == 612);
+  assert(sections[0].page_size_pt().height_pt == 792);
+  assert(sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
+  assert(sections[0].page_margins_pt().top_pt == 72);
+  assert(sections[0].page_margins_pt().right_pt == 90);
+  assert(sections[0].page_margins_pt().bottom_pt == 72);
+  assert(sections[0].page_margins_pt().left_pt == 90);
+  assert(sections[0].page_margins_pt().header_pt == 36);
+  assert(sections[0].page_margins_pt().footer_pt == 36);
+  assert(sections[0].page_margins_pt().gutter_pt == 0);
   assert(page_size.width_pt == 612);
   assert(page_size.height_pt == 792);
   assert(page_orientation == docxcpp::PageOrientation::Landscape);
@@ -215,6 +239,86 @@ int main() {
   assert(rels_xml.find("http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments") !=
          std::string::npos);
   assert(comments_xml.find("coverage note") != std::string::npos);
+
+  {
+    auto package = docxcpp::OpcPackage::open(output);
+    const auto& document_xml = package.entry("word/document.xml");
+    pugi::xml_document xml;
+    const pugi::xml_parse_result parse_result =
+        xml.load_buffer(document_xml.data(), document_xml.size());
+    assert(parse_result);
+
+    const auto child_named = [](const pugi::xml_node& parent, const char* name) {
+      for (const pugi::xml_node& child : parent.children()) {
+        if (std::string(child.name()) == name) {
+          return child;
+        }
+      }
+      return pugi::xml_node();
+    };
+
+    pugi::xml_node body = child_named(child_named(xml, "w:document"), "w:body");
+    assert(body);
+    const pugi::xml_node trailing_sect_pr = child_named(body, "w:sectPr");
+    assert(trailing_sect_pr);
+
+    pugi::xml_node first_paragraph;
+    for (const pugi::xml_node& child : body.children()) {
+      if (std::string(child.name()) == "w:p") {
+        first_paragraph = child;
+        break;
+      }
+    }
+    assert(first_paragraph);
+
+    pugi::xml_node injected_paragraph = body.insert_copy_before(first_paragraph, trailing_sect_pr);
+    pugi::xml_node injected_p_pr = injected_paragraph.prepend_child("w:pPr");
+    pugi::xml_node injected_sect_pr = injected_p_pr.append_child("w:sectPr");
+
+    pugi::xml_node injected_pg_sz = injected_sect_pr.append_child("w:pgSz");
+    injected_pg_sz.append_attribute("w:w").set_value("20000");
+    injected_pg_sz.append_attribute("w:h").set_value("10000");
+    injected_pg_sz.append_attribute("w:orient").set_value("landscape");
+
+    pugi::xml_node injected_pg_mar = injected_sect_pr.append_child("w:pgMar");
+    injected_pg_mar.append_attribute("w:top").set_value("1440");
+    injected_pg_mar.append_attribute("w:right").set_value("720");
+    injected_pg_mar.append_attribute("w:bottom").set_value("2160");
+    injected_pg_mar.append_attribute("w:left").set_value("1080");
+    injected_pg_mar.append_attribute("w:header").set_value("540");
+    injected_pg_mar.append_attribute("w:footer").set_value("360");
+    injected_pg_mar.append_attribute("w:gutter").set_value("180");
+
+    package.set_entry("word/document.xml", xml_to_bytes(xml));
+    const fs::path multi_section_output = artifact_dir / "api-coverage-multi-section.docx";
+    package.save(multi_section_output);
+
+    docxcpp::Document multi_section_doc(multi_section_output);
+    const auto multi_sections = multi_section_doc.sections();
+    assert(multi_sections.size() == 2);
+
+    assert(multi_sections[0].page_size_pt().width_pt == 1000);
+    assert(multi_sections[0].page_size_pt().height_pt == 500);
+    assert(multi_sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
+    assert(multi_sections[0].page_margins_pt().top_pt == 72);
+    assert(multi_sections[0].page_margins_pt().right_pt == 36);
+    assert(multi_sections[0].page_margins_pt().bottom_pt == 108);
+    assert(multi_sections[0].page_margins_pt().left_pt == 54);
+    assert(multi_sections[0].page_margins_pt().header_pt == 27);
+    assert(multi_sections[0].page_margins_pt().footer_pt == 18);
+    assert(multi_sections[0].page_margins_pt().gutter_pt == 9);
+
+    assert(multi_sections[1].page_size_pt().width_pt == 612);
+    assert(multi_sections[1].page_size_pt().height_pt == 792);
+    assert(multi_sections[1].page_orientation() == docxcpp::PageOrientation::Landscape);
+    assert(multi_sections[1].page_margins_pt().top_pt == 72);
+    assert(multi_sections[1].page_margins_pt().right_pt == 90);
+    assert(multi_sections[1].page_margins_pt().bottom_pt == 72);
+    assert(multi_sections[1].page_margins_pt().left_pt == 90);
+    assert(multi_sections[1].page_margins_pt().header_pt == 36);
+    assert(multi_sections[1].page_margins_pt().footer_pt == 36);
+    assert(multi_sections[1].page_margins_pt().gutter_pt == 0);
+  }
 
   bool threw = false;
 

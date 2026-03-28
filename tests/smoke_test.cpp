@@ -102,6 +102,7 @@ int main() {
   docxcpp::Document reopened(output);
   const auto paragraphs = reopened.paragraphs();
   const auto tables = reopened.tables();
+  const auto sections = reopened.sections();
   const auto page_size = reopened.page_size_pt();
   const auto page_orientation = reopened.page_orientation();
   const auto page_margins = reopened.page_margins_pt();
@@ -215,6 +216,17 @@ int main() {
   assert(tables[0].rows()[1].cells()[2].text() == "r2c3\nsecond paragraph\n");
   assert(tables[0].rows()[1].cells()[2].grid_span() == 1);
   assert(tables[0].rows()[1].cells()[2].vertical_merge().empty());
+  assert(sections.size() == 1);
+  assert(sections[0].page_size_pt().width_pt == 595);
+  assert(sections[0].page_size_pt().height_pt == 842);
+  assert(sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
+  assert(sections[0].page_margins_pt().top_pt == 72);
+  assert(sections[0].page_margins_pt().right_pt == 54);
+  assert(sections[0].page_margins_pt().bottom_pt == 72);
+  assert(sections[0].page_margins_pt().left_pt == 54);
+  assert(sections[0].page_margins_pt().header_pt == 36);
+  assert(sections[0].page_margins_pt().footer_pt == 24);
+  assert(sections[0].page_margins_pt().gutter_pt == 18);
   assert(page_size.width_pt == 595);
   assert(page_size.height_pt == 842);
   assert(page_orientation == docxcpp::PageOrientation::Landscape);

@@ -11,6 +11,7 @@
 
 #include "docxcpp/opc_package.hpp"
 #include "docxcpp/paragraph.hpp"
+#include "docxcpp/section.hpp"
 #include "docxcpp/table.hpp"
 
 namespace docxcpp {
@@ -36,26 +37,6 @@ struct CommentInfo {
   std::string text;
   std::string author;
   std::string initials;
-};
-
-struct PageSize {
-  int width_pt{0};
-  int height_pt{0};
-};
-
-enum class PageOrientation {
-  Portrait,
-  Landscape,
-};
-
-struct PageMargins {
-  int top_pt{0};
-  int right_pt{0};
-  int bottom_pt{0};
-  int left_pt{0};
-  int header_pt{0};
-  int footer_pt{0};
-  int gutter_pt{0};
 };
 
 class Document {
@@ -129,6 +110,7 @@ public:
                           const std::string& author = {}, const std::string& initials = {});
   std::vector<Paragraph> paragraphs() const;
   std::vector<Table> tables() const;
+  std::vector<Section> sections() const;
   PageSize page_size_pt() const;
   PageOrientation page_orientation() const;
   PageMargins page_margins_pt() const;
