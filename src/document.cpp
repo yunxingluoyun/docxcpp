@@ -14,14 +14,32 @@
 
 namespace docxcpp {
 
+struct ParagraphBinding {
+  pugi::xml_document* xml{nullptr};
+  bool* dirty{nullptr};
+  int kind{0};
+  std::size_t paragraph_index{0};
+  std::size_t table_index{0};
+  std::size_t row_index{0};
+  std::size_t col_index{0};
+  std::size_t cell_paragraph_index{0};
+};
+
 namespace {
 
 constexpr const char* kDocumentEntry = "word/document.xml";
 constexpr const char* kDocumentRelationshipsEntry = "word/_rels/document.xml.rels";
 constexpr const char* kContentTypesEntry = "[Content_Types].xml";
+constexpr const char* kCommentsEntry = "word/comments.xml";
 constexpr const char* kTableStyleValue = "TableGrid";
 constexpr const char* kImageRelationshipType =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+constexpr const char* kHyperlinkRelationshipType =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+constexpr const char* kCommentsRelationshipType =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+constexpr const char* kCommentsContentType =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 constexpr const char* kPictureUri =
     "http://schemas.openxmlformats.org/drawingml/2006/picture";
 
@@ -67,12 +85,25 @@ std::uint16_t read_be16(const std::vector<std::uint8_t>& bytes, std::size_t offs
   return static_cast<std::uint16_t>((bytes[offset] << 8U) | bytes[offset + 1]);
 }
 
-ImageInfo load_image_info(const std::filesystem::path& image_path) {
-  ImageInfo info;
-  info.filename = image_path.filename().string();
-  info.bytes = read_binary_file(image_path);
+ImageInfo load_image_info(const std::vector<std::uint8_t>& bytes, std::string extension,
+                          std::string filename);
 
+ImageInfo load_image_info(const std::filesystem::path& image_path) {
+  const std::vector<std::uint8_t> bytes = read_binary_file(image_path);
   std::string extension = image_path.extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (!extension.empty() && extension.front() == '.') {
+    extension.erase(extension.begin());
+  }
+  return load_image_info(bytes, extension, image_path.filename().string());
+}
+
+ImageInfo load_image_info(const std::vector<std::uint8_t>& bytes, std::string extension,
+                          std::string filename) {
+  ImageInfo info;
+  info.filename = std::move(filename);
+  info.bytes = bytes;
   std::transform(extension.begin(), extension.end(), extension.begin(),
                  [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
   if (!extension.empty() && extension.front() == '.') {
@@ -87,7 +118,7 @@ ImageInfo load_image_info(const std::filesystem::path& image_path) {
 
   if (extension == "png") {
     if (info.bytes.size() < 24 || read_be32(info.bytes, 12) != 0x49484452U) {
-      throw std::runtime_error("unsupported or invalid PNG: " + image_path.string());
+      throw std::runtime_error("unsupported or invalid PNG: " + info.filename);
     }
     info.content_type = "image/png";
     width = read_be32(info.bytes, 16);
@@ -158,7 +189,7 @@ ImageInfo load_image_info(const std::filesystem::path& image_path) {
     }
 
     if (width == 0 || height == 0) {
-      throw std::runtime_error("unsupported or invalid JPEG: " + image_path.string());
+      throw std::runtime_error("unsupported or invalid JPEG: " + info.filename);
     }
   } else {
     throw std::runtime_error("only png/jpg/jpeg images are supported right now");
@@ -195,6 +226,23 @@ const char* alignment_value(ParagraphAlignment alignment) {
     default:
       return nullptr;
   }
+}
+
+const char* orientation_value(PageOrientation orientation) {
+  switch (orientation) {
+    case PageOrientation::Landscape:
+      return "landscape";
+    case PageOrientation::Portrait:
+    default:
+      return "portrait";
+  }
+}
+
+PageOrientation orientation_from_value(std::string_view value) {
+  if (value == "landscape") {
+    return PageOrientation::Landscape;
+  }
+  return PageOrientation::Portrait;
 }
 
 ParagraphAlignment alignment_from_value(std::string_view value) {
@@ -304,6 +352,62 @@ ParagraphAlignment paragraph_alignment_from_xml(const pugi::xml_node& paragraph)
   return alignment_from_value(jc.attribute("w:val").value());
 }
 
+std::optional<int> twips_attr_to_pt(const pugi::xml_node& node, const char* attr_name) {
+  const pugi::xml_attribute attr = node.attribute(attr_name);
+  if (!attr) {
+    return std::nullopt;
+  }
+  return attr.as_int() / static_cast<int>(kTwipsPerPoint);
+}
+
+std::optional<bool> on_off_property_from_xml(const pugi::xml_node& parent, const char* name) {
+  const pugi::xml_node node = child_named(parent, name);
+  if (!node) {
+    return std::nullopt;
+  }
+  const pugi::xml_attribute val = node.attribute("w:val");
+  if (!val) {
+    return true;
+  }
+  const std::string_view value = val.value();
+  if (value == "0" || value == "false" || value == "off") {
+    return false;
+  }
+  return true;
+}
+
+ParagraphFormat paragraph_format_from_xml(const pugi::xml_node& paragraph) {
+  ParagraphFormat format;
+  const pugi::xml_node p_pr = child_named(paragraph, "w:pPr");
+  if (!p_pr) {
+    return format;
+  }
+
+  if (const pugi::xml_node ind = child_named(p_pr, "w:ind")) {
+    format.left_indent_pt = twips_attr_to_pt(ind, "w:left");
+    format.right_indent_pt = twips_attr_to_pt(ind, "w:right");
+    if (const pugi::xml_attribute first_line = ind.attribute("w:firstLine")) {
+      format.first_line_indent_pt = first_line.as_int() / static_cast<int>(kTwipsPerPoint);
+    } else if (const pugi::xml_attribute hanging = ind.attribute("w:hanging")) {
+      format.first_line_indent_pt = -(hanging.as_int() / static_cast<int>(kTwipsPerPoint));
+    }
+  }
+
+  if (const pugi::xml_node spacing = child_named(p_pr, "w:spacing")) {
+    format.space_before_pt = twips_attr_to_pt(spacing, "w:before");
+    format.space_after_pt = twips_attr_to_pt(spacing, "w:after");
+    if (const pugi::xml_attribute line = spacing.attribute("w:line")) {
+      format.line_spacing_pt = line.as_int() / static_cast<int>(kTwipsPerPoint);
+    }
+  }
+
+  format.keep_together = on_off_property_from_xml(p_pr, "w:keepLines");
+  format.keep_with_next = on_off_property_from_xml(p_pr, "w:keepNext");
+  format.page_break_before = on_off_property_from_xml(p_pr, "w:pageBreakBefore");
+
+  return format;
+}
+
 std::string paragraph_style_id_from_xml(const pugi::xml_node& paragraph) {
   const pugi::xml_node p_pr = child_named(paragraph, "w:pPr");
   if (!p_pr) {
@@ -340,6 +444,11 @@ RunStyle first_run_style_from_xml(const pugi::xml_node& paragraph) {
     if (std::string_view(child.name()) == "w:r") {
       return run_style_from_xml(child);
     }
+    if (std::string_view(child.name()) == "w:hyperlink") {
+      for (const pugi::xml_node& run : child.children("w:r")) {
+        return run_style_from_xml(run);
+      }
+    }
   }
   return {};
 }
@@ -375,12 +484,19 @@ RunStyle run_style_from_xml(const pugi::xml_node& run) {
 std::vector<Run> runs_from_xml(const pugi::xml_node& paragraph) {
   std::vector<Run> runs;
   for (const pugi::xml_node& child : paragraph.children()) {
-    if (std::string_view(child.name()) != "w:r") {
+    if (std::string_view(child.name()) == "w:r") {
+      std::string text;
+      collect_text(child, text);
+      runs.emplace_back(text, run_style_from_xml(child));
       continue;
     }
-    std::string text;
-    collect_text(child, text);
-    runs.emplace_back(text, run_style_from_xml(child));
+    if (std::string_view(child.name()) == "w:hyperlink") {
+      for (const pugi::xml_node& run : child.children("w:r")) {
+        std::string text;
+        collect_text(run, text);
+        runs.emplace_back(text, run_style_from_xml(run));
+      }
+    }
   }
   return runs;
 }
@@ -457,6 +573,14 @@ pugi::xml_node get_or_add_child(pugi::xml_node parent, const char* name) {
   return child;
 }
 
+pugi::xml_node get_or_add_paragraph_properties(pugi::xml_node paragraph) {
+  pugi::xml_node p_pr = child_named(paragraph, "w:pPr");
+  if (!p_pr) {
+    p_pr = paragraph.prepend_child("w:pPr");
+  }
+  return p_pr;
+}
+
 pugi::xml_node document_body(const pugi::xml_document& xml) {
   pugi::xml_node document = child_named(xml, "w:document");
   if (!document) {
@@ -524,13 +648,56 @@ void apply_alignment(pugi::xml_node paragraph, ParagraphAlignment alignment) {
   }
 }
 
+void apply_indent_attr(pugi::xml_node ind, const char* name, std::optional<int> pt_value) {
+  if (!pt_value.has_value()) {
+    if (ind.attribute(name)) {
+      ind.remove_attribute(name);
+    }
+    return;
+  }
+  const auto twips = std::to_string(*pt_value * static_cast<int>(kTwipsPerPoint));
+  if (ind.attribute(name)) {
+    ind.attribute(name).set_value(twips.c_str());
+  } else {
+    ind.append_attribute(name).set_value(twips.c_str());
+  }
+}
+
+void cleanup_if_empty(pugi::xml_node parent, pugi::xml_node child) {
+  if (child && !child.first_attribute() && !child.first_child()) {
+    parent.remove_child(child);
+  }
+}
+
+void set_on_off_property(pugi::xml_node parent, const char* name, std::optional<bool> value) {
+  pugi::xml_node node = child_named(parent, name);
+  if (!value.has_value()) {
+    if (node) {
+      parent.remove_child(node);
+    }
+    return;
+  }
+  if (!node) {
+    node = parent.append_child(name);
+  }
+  if (node.attribute("w:val")) {
+    node.remove_attribute("w:val");
+  }
+  if (!*value) {
+    node.append_attribute("w:val").set_value("0");
+  }
+}
+
 void apply_run_style(pugi::xml_node run, const RunStyle& style) {
   if (!style.bold && !style.italic && !style.underline && style.font_size_pt <= 0 &&
       style.color_hex.empty() && style.font_name.empty() && style.highlight.empty()) {
     return;
   }
 
-  pugi::xml_node properties = run.prepend_child("w:rPr");
+  pugi::xml_node properties = child_named(run, "w:rPr");
+  if (!properties) {
+    properties = run.prepend_child("w:rPr");
+  }
   if (!style.font_name.empty()) {
     pugi::xml_node fonts = properties.append_child("w:rFonts");
     fonts.append_attribute("w:ascii").set_value(style.font_name.c_str());
@@ -557,6 +724,17 @@ void apply_run_style(pugi::xml_node run, const RunStyle& style) {
   if (!style.highlight.empty()) {
     pugi::xml_node highlight = properties.append_child("w:highlight");
     highlight.append_attribute("w:val").set_value(normalized_highlight(style.highlight).c_str());
+  }
+}
+
+void apply_hyperlink_character_style(pugi::xml_node run) {
+  pugi::xml_node properties = child_named(run, "w:rPr");
+  if (!properties) {
+    properties = run.prepend_child("w:rPr");
+  }
+  if (!child_named(properties, "w:rStyle")) {
+    pugi::xml_node style = properties.append_child("w:rStyle");
+    style.append_attribute("w:val").set_value("Hyperlink");
   }
 }
 
@@ -619,7 +797,7 @@ Paragraph paragraph_from_runs(const std::vector<Run>& runs, ParagraphAlignment a
     }
   }
   return Paragraph(combined_text(runs), alignment, first_style, has_page_break, runs,
-                   std::move(style_id), heading_level);
+                   std::move(style_id), heading_level, {}, {}, {});
 }
 
 void append_run_text(pugi::xml_node run, const std::string& text) {
@@ -728,17 +906,98 @@ PictureSize picture_size_from_inline(const pugi::xml_node& inline_node) {
 
 using RelTargetMap = std::unordered_map<std::string, std::string>;
 
-RelTargetMap image_relationship_targets(const OpcPackage& package) {
+enum class ParagraphBindingKind {
+  Body,
+  TableCell,
+};
+
+std::shared_ptr<ParagraphBinding> bind_body_paragraph(pugi::xml_document& xml, bool& dirty,
+                                                      std::size_t paragraph_index) {
+  auto binding = std::make_shared<ParagraphBinding>();
+  binding->xml = &xml;
+  binding->dirty = &dirty;
+  binding->kind = static_cast<int>(ParagraphBindingKind::Body);
+  binding->paragraph_index = paragraph_index;
+  return binding;
+}
+
+std::shared_ptr<ParagraphBinding> bind_table_cell_paragraph(pugi::xml_document& xml, bool& dirty,
+                                                            std::size_t table_index,
+                                                            std::size_t row_index,
+                                                            std::size_t col_index,
+                                                            std::size_t cell_paragraph_index) {
+  auto binding = std::make_shared<ParagraphBinding>();
+  binding->xml = &xml;
+  binding->dirty = &dirty;
+  binding->kind = static_cast<int>(ParagraphBindingKind::TableCell);
+  binding->table_index = table_index;
+  binding->row_index = row_index;
+  binding->col_index = col_index;
+  binding->cell_paragraph_index = cell_paragraph_index;
+  return binding;
+}
+
+std::size_t count_named_children(pugi::xml_node parent, const char* name) {
+  std::size_t count = 0;
+  for (const pugi::xml_node& child : parent.children(name)) {
+    (void)child;
+    ++count;
+  }
+  return count;
+}
+
+std::size_t body_paragraph_count(const pugi::xml_document& xml) {
+  return count_named_children(document_body(xml), "w:p");
+}
+
+std::size_t paragraph_index_in_cell(pugi::xml_node cell) {
+  return count_named_children(cell, "w:p");
+}
+
+RelTargetMap relationship_targets_by_type(const OpcPackage& package, const char* relationship_type) {
   RelTargetMap targets;
   const pugi::xml_document rels_xml = parse_package_xml(package, kDocumentRelationshipsEntry);
   const pugi::xml_node relationships = child_named(rels_xml, "Relationships");
   for (const pugi::xml_node& rel : relationships.children("Relationship")) {
-    if (std::string_view(rel.attribute("Type").value()) != kImageRelationshipType) {
+    if (std::string_view(rel.attribute("Type").value()) != relationship_type) {
       continue;
     }
     targets.emplace(rel.attribute("Id").value(), rel.attribute("Target").value());
   }
   return targets;
+}
+
+RelTargetMap image_relationship_targets(const OpcPackage& package) {
+  return relationship_targets_by_type(package, kImageRelationshipType);
+}
+
+std::vector<HyperlinkInfo> hyperlinks_from_xml(const pugi::xml_node& paragraph,
+                                               const RelTargetMap& hyperlink_targets) {
+  std::vector<HyperlinkInfo> result;
+  for (const pugi::xml_node& child : paragraph.children("w:hyperlink")) {
+    HyperlinkInfo info;
+    const std::string rel_id = child.attribute("r:id").value();
+    const auto it = hyperlink_targets.find(rel_id);
+    if (it != hyperlink_targets.end()) {
+      info.url = it->second;
+    }
+    collect_text(child, info.text);
+    result.push_back(std::move(info));
+  }
+  return result;
+}
+
+pugi::xml_node paragraph_node_from_binding(const ParagraphBinding& binding) {
+  if (binding.xml == nullptr) {
+    return {};
+  }
+  if (binding.kind == static_cast<int>(ParagraphBindingKind::Body)) {
+    return nth_child_named(document_body(*binding.xml), "w:p", binding.paragraph_index);
+  }
+  pugi::xml_node table = require_table_node(*binding.xml, binding.table_index);
+  pugi::xml_node row = require_row_node(table, binding.row_index);
+  pugi::xml_node cell = require_cell_node(row, binding.col_index);
+  return nth_child_named(cell, "w:p", binding.cell_paragraph_index);
 }
 
 void collect_pictures_from_paragraph(const pugi::xml_node& paragraph, std::size_t paragraph_index,
@@ -815,6 +1074,24 @@ void ensure_content_type_default(pugi::xml_document& content_types_xml, const st
   }
   pugi::xml_node entry = types.append_child("Default");
   entry.append_attribute("Extension").set_value(extension.c_str());
+  entry.append_attribute("ContentType").set_value(content_type.c_str());
+}
+
+void ensure_content_type_override(pugi::xml_document& content_types_xml, const std::string& part_name,
+                                  const std::string& content_type) {
+  pugi::xml_node types = child_named(content_types_xml, "Types");
+  for (pugi::xml_node node : types.children("Override")) {
+    if (part_name == node.attribute("PartName").value()) {
+      if (node.attribute("ContentType")) {
+        node.attribute("ContentType").set_value(content_type.c_str());
+      } else {
+        node.append_attribute("ContentType").set_value(content_type.c_str());
+      }
+      return;
+    }
+  }
+  pugi::xml_node entry = types.append_child("Override");
+  entry.append_attribute("PartName").set_value(part_name.c_str());
   entry.append_attribute("ContentType").set_value(content_type.c_str());
 }
 
@@ -919,6 +1196,104 @@ std::string register_picture_part(OpcPackage& package, const ImageInfo& image) {
   return rel_id;
 }
 
+std::string register_external_relationship(OpcPackage& package, const std::string& relationship_type,
+                                           const std::string& target) {
+  pugi::xml_document rels_xml = parse_package_xml(package, kDocumentRelationshipsEntry);
+  pugi::xml_node relationships = child_named(rels_xml, "Relationships");
+  for (const pugi::xml_node& rel : relationships.children("Relationship")) {
+    if (std::string_view(rel.attribute("Type").value()) == relationship_type &&
+        std::string_view(rel.attribute("Target").value()) == target &&
+        std::string_view(rel.attribute("TargetMode").value()) == "External") {
+      return rel.attribute("Id").value();
+    }
+  }
+  const std::string rel_id = "rId" + std::to_string(next_relationship_id(rels_xml));
+  pugi::xml_node rel = relationships.append_child("Relationship");
+  rel.append_attribute("Id").set_value(rel_id.c_str());
+  rel.append_attribute("Type").set_value(relationship_type.c_str());
+  rel.append_attribute("Target").set_value(target.c_str());
+  rel.append_attribute("TargetMode").set_value("External");
+  package.set_entry(kDocumentRelationshipsEntry, xml_to_bytes(rels_xml));
+  return rel_id;
+}
+
+const char* default_comments_xml() {
+  return R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"/>)";
+}
+
+void ensure_comments_part(OpcPackage& package) {
+  if (!package.has_entry(kCommentsEntry)) {
+    const std::string xml = default_comments_xml();
+    package.set_entry(kCommentsEntry, std::vector<std::uint8_t>(xml.begin(), xml.end()));
+  }
+
+  pugi::xml_document rels_xml = parse_package_xml(package, kDocumentRelationshipsEntry);
+  pugi::xml_node relationships = child_named(rels_xml, "Relationships");
+  bool has_comments_rel = false;
+  for (const pugi::xml_node& rel : relationships.children("Relationship")) {
+    if (std::string_view(rel.attribute("Type").value()) == kCommentsRelationshipType) {
+      has_comments_rel = true;
+      break;
+    }
+  }
+  if (!has_comments_rel) {
+    const std::string rel_id = "rId" + std::to_string(next_relationship_id(rels_xml));
+    pugi::xml_node rel = relationships.append_child("Relationship");
+    rel.append_attribute("Id").set_value(rel_id.c_str());
+    rel.append_attribute("Type").set_value(kCommentsRelationshipType);
+    rel.append_attribute("Target").set_value("comments.xml");
+    package.set_entry(kDocumentRelationshipsEntry, xml_to_bytes(rels_xml));
+  }
+
+  pugi::xml_document content_types_xml = parse_package_xml(package, kContentTypesEntry);
+  ensure_content_type_override(content_types_xml, "/word/comments.xml", kCommentsContentType);
+  package.set_entry(kContentTypesEntry, xml_to_bytes(content_types_xml));
+}
+
+std::size_t next_comment_id(const pugi::xml_document& comments_xml) {
+  std::size_t max_id = 0;
+  const pugi::xml_node comments = child_named(comments_xml, "w:comments");
+  for (const pugi::xml_node& comment : comments.children("w:comment")) {
+    max_id = std::max(max_id, static_cast<std::size_t>(comment.attribute("w:id").as_uint()));
+  }
+  return comments.first_child() ? max_id + 1 : 0;
+}
+
+void append_comment_markers(pugi::xml_node paragraph, std::size_t comment_id) {
+  pugi::xml_node p_pr = child_named(paragraph, "w:pPr");
+  pugi::xml_node start = p_pr ? paragraph.insert_child_after("w:commentRangeStart", p_pr)
+                              : paragraph.prepend_child("w:commentRangeStart");
+  start.append_attribute("w:id").set_value(std::to_string(comment_id).c_str());
+
+  pugi::xml_node end = paragraph.append_child("w:commentRangeEnd");
+  end.append_attribute("w:id").set_value(std::to_string(comment_id).c_str());
+
+  pugi::xml_node ref_run = paragraph.append_child("w:r");
+  pugi::xml_node ref = ref_run.append_child("w:commentReference");
+  ref.append_attribute("w:id").set_value(std::to_string(comment_id).c_str());
+}
+
+void append_hyperlink(pugi::xml_node paragraph, const std::string& rel_id, const std::string& text,
+                      const RunStyle& style) {
+  pugi::xml_node hyperlink = paragraph.append_child("w:hyperlink");
+  hyperlink.append_attribute("r:id").set_value(rel_id.c_str());
+  hyperlink.append_attribute("w:history").set_value("1");
+  pugi::xml_node run = hyperlink.append_child("w:r");
+  apply_hyperlink_character_style(run);
+  apply_run_style(run, style);
+  append_run_text(run, text);
+}
+
 std::size_t next_docpr_id(const pugi::xml_node& node, std::size_t current_max = 0) {
   if (std::string_view(node.name()) == "wp:docPr") {
     current_max = std::max(current_max, static_cast<std::size_t>(node.attribute("id").as_uint()));
@@ -959,14 +1334,19 @@ const RunStyle& Run::style() const noexcept { return style_; }
 
 Paragraph::Paragraph(std::string text, ParagraphAlignment alignment, RunStyle first_run_style,
                      bool has_page_break, std::vector<Run> runs, std::string style_id,
-                     int heading_level)
+                     int heading_level, ParagraphFormat format,
+                     std::vector<HyperlinkInfo> hyperlinks,
+                     std::shared_ptr<ParagraphBinding> binding)
     : text_(std::move(text)),
       alignment_(alignment),
       first_run_style_(std::move(first_run_style)),
       has_page_break_(has_page_break),
       runs_(std::move(runs)),
       style_id_(std::move(style_id)),
-      heading_level_(heading_level) {}
+      heading_level_(heading_level),
+      format_(std::move(format)),
+      hyperlinks_(std::move(hyperlinks)),
+      binding_(std::move(binding)) {}
 
 const std::string& Paragraph::text() const noexcept { return text_; }
 
@@ -981,6 +1361,35 @@ const std::vector<Run>& Paragraph::runs() const noexcept { return runs_; }
 const std::string& Paragraph::style_id() const noexcept { return style_id_; }
 
 int Paragraph::heading_level() const noexcept { return heading_level_; }
+
+const ParagraphFormat& Paragraph::format() const noexcept { return format_; }
+
+const std::vector<HyperlinkInfo>& Paragraph::hyperlinks() const noexcept { return hyperlinks_; }
+
+Run Paragraph::add_run(const std::string& text, const RunStyle& style) {
+  if (!binding_) {
+    throw std::logic_error("paragraph is not bound to a writable document");
+  }
+  pugi::xml_node paragraph = paragraph_node_from_binding(*binding_);
+  if (!paragraph) {
+    throw std::out_of_range("bound paragraph no longer exists");
+  }
+
+  pugi::xml_node run = paragraph.append_child("w:r");
+  apply_run_style(run, style);
+  append_run_text(run, text);
+  if (binding_->dirty != nullptr) {
+    *binding_->dirty = true;
+  }
+
+  Run added_run(text, style);
+  if (runs_.empty()) {
+    first_run_style_ = style;
+  }
+  runs_.push_back(added_run);
+  text_ += text;
+  return added_run;
+}
 
 TableCell::TableCell(std::string text, std::size_t grid_span, std::string vertical_merge)
     : text_(std::move(text)),
@@ -1016,29 +1425,38 @@ Paragraph Document::add_paragraph(const std::string& text) {
 }
 
 Paragraph Document::add_paragraph(const std::vector<Run>& runs, ParagraphAlignment alignment) {
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   apply_alignment(paragraph, alignment);
   set_paragraph_runs(paragraph, runs);
   dirty_ = true;
-  return paragraph_from_runs(runs, alignment);
+  Paragraph result = paragraph_from_runs(runs, alignment);
+  result = Paragraph(result.text(), result.alignment(), result.first_run_style(),
+                     result.has_page_break(), result.runs(), result.style_id(),
+                     result.heading_level(), result.format(), {}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
+  return result;
 }
 
 Paragraph Document::add_page_break() {
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   pugi::xml_node run = paragraph.append_child("w:r");
   pugi::xml_node br = run.append_child("w:br");
   br.append_attribute("w:type").set_value("page");
   dirty_ = true;
-  return Paragraph("");
+  return Paragraph("\n", ParagraphAlignment::Inherit, {}, true, {Run("\n", {})}, {}, -1, {}, {},
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
 }
 
 Paragraph Document::add_styled_paragraph(const std::string& text, const RunStyle& style,
                                          ParagraphAlignment alignment) {
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   apply_alignment(paragraph, alignment);
   set_paragraph_text(paragraph, text, style);
   dirty_ = true;
-  return Paragraph(text);
+  return Paragraph(text, alignment, style, false, {Run(text, style)}, {}, -1, {}, {},
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
 }
 
 Paragraph Document::add_heading(const std::string& text, int level) {
@@ -1047,6 +1465,7 @@ Paragraph Document::add_heading(const std::string& text, int level) {
 
 Paragraph Document::add_heading(const std::vector<Run>& runs, int level,
                                 ParagraphAlignment alignment) {
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   pugi::xml_node properties = paragraph.append_child("w:pPr");
   const std::string style_id = paragraph_style_id_for_level(level);
@@ -1055,19 +1474,25 @@ Paragraph Document::add_heading(const std::vector<Run>& runs, int level,
   apply_alignment(paragraph, alignment);
   set_paragraph_runs(paragraph, runs);
   dirty_ = true;
-  return paragraph_from_runs(runs, alignment, style_id, level);
+  Paragraph result = paragraph_from_runs(runs, alignment, style_id, level);
+  return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
+                   result.runs(), style_id, level, result.format(), {},
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
 }
 
 Paragraph Document::add_styled_heading(const std::string& text, int level, const RunStyle& run_style,
                                        ParagraphAlignment alignment) {
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   pugi::xml_node properties = paragraph.append_child("w:pPr");
+  const std::string style_id = paragraph_style_id_for_level(level);
   pugi::xml_node style_node = properties.append_child("w:pStyle");
-  style_node.append_attribute("w:val").set_value(paragraph_style_id_for_level(level).c_str());
+  style_node.append_attribute("w:val").set_value(style_id.c_str());
   apply_alignment(paragraph, alignment);
   set_paragraph_text(paragraph, text, run_style);
   dirty_ = true;
-  return Paragraph(text);
+  return Paragraph(text, alignment, run_style, false, {Run(text, run_style)}, style_id, level, {},
+                   {}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
 }
 
 Table Document::add_table(std::size_t rows, std::size_t cols) {
@@ -1142,10 +1567,13 @@ Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_
   pugi::xml_node table = require_table_node(*xml_, table_index);
   pugi::xml_node row = require_row_node(table, row_index);
   pugi::xml_node cell = require_cell_node(row, col_index);
+  const std::size_t cell_paragraph_index = paragraph_index_in_cell(cell);
   pugi::xml_node paragraph = cell.append_child("w:p");
   set_paragraph_text(paragraph, text);
   dirty_ = true;
-  return Paragraph(text);
+  return Paragraph(text, ParagraphAlignment::Inherit, {}, false, {Run(text, {})}, {}, -1, {}, {},
+                   bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
+                                             cell_paragraph_index));
 }
 
 Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_t row_index,
@@ -1154,10 +1582,15 @@ Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_
   pugi::xml_node table = require_table_node(*xml_, table_index);
   pugi::xml_node row = require_row_node(table, row_index);
   pugi::xml_node cell = require_cell_node(row, col_index);
+  const std::size_t cell_paragraph_index = paragraph_index_in_cell(cell);
   pugi::xml_node paragraph = cell.append_child("w:p");
   set_paragraph_runs(paragraph, runs);
   dirty_ = true;
-  return paragraph_from_runs(runs, ParagraphAlignment::Inherit);
+  Paragraph result = paragraph_from_runs(runs, ParagraphAlignment::Inherit);
+  return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
+                   result.runs(), result.style_id(), result.heading_level(), result.format(), {},
+                   bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
+                                             cell_paragraph_index));
 }
 
 void Document::merge_table_cells(std::size_t table_index, std::size_t start_row, std::size_t start_col,
@@ -1221,6 +1654,120 @@ void Document::set_paragraph_alignment(std::size_t paragraph_index, ParagraphAli
   dirty_ = true;
 }
 
+void Document::set_paragraph_indentation_pt(std::size_t paragraph_index,
+                                            std::optional<int> left_indent_pt,
+                                            std::optional<int> right_indent_pt,
+                                            std::optional<int> first_line_indent_pt) {
+  pugi::xml_node paragraph = nth_child_named(document_body(*xml_), "w:p", paragraph_index);
+  if (!paragraph) {
+    throw std::out_of_range("paragraph_index out of range");
+  }
+  if ((left_indent_pt && *left_indent_pt < 0) || (right_indent_pt && *right_indent_pt < 0)) {
+    throw std::invalid_argument("left/right paragraph indent cannot be negative");
+  }
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties(paragraph);
+  pugi::xml_node ind = child_named(p_pr, "w:ind");
+  if (!ind && (left_indent_pt || right_indent_pt || first_line_indent_pt)) {
+    ind = p_pr.append_child("w:ind");
+  }
+  if (ind) {
+    apply_indent_attr(ind, "w:left", left_indent_pt);
+    apply_indent_attr(ind, "w:right", right_indent_pt);
+    if (ind.attribute("w:firstLine")) {
+      ind.remove_attribute("w:firstLine");
+    }
+    if (ind.attribute("w:hanging")) {
+      ind.remove_attribute("w:hanging");
+    }
+    if (first_line_indent_pt.has_value()) {
+      const auto twips =
+          std::to_string(std::abs(*first_line_indent_pt) * static_cast<int>(kTwipsPerPoint));
+      const char* attr_name = *first_line_indent_pt >= 0 ? "w:firstLine" : "w:hanging";
+      ind.append_attribute(attr_name).set_value(twips.c_str());
+    }
+    cleanup_if_empty(p_pr, ind);
+    cleanup_if_empty(paragraph, p_pr);
+  }
+  dirty_ = true;
+}
+
+void Document::set_paragraph_spacing_pt(std::size_t paragraph_index,
+                                        std::optional<int> space_before_pt,
+                                        std::optional<int> space_after_pt) {
+  pugi::xml_node paragraph = nth_child_named(document_body(*xml_), "w:p", paragraph_index);
+  if (!paragraph) {
+    throw std::out_of_range("paragraph_index out of range");
+  }
+  if ((space_before_pt && *space_before_pt < 0) || (space_after_pt && *space_after_pt < 0)) {
+    throw std::invalid_argument("paragraph spacing cannot be negative");
+  }
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties(paragraph);
+  pugi::xml_node spacing = child_named(p_pr, "w:spacing");
+  if (!spacing && (space_before_pt || space_after_pt)) {
+    spacing = p_pr.append_child("w:spacing");
+  }
+  if (spacing) {
+    apply_indent_attr(spacing, "w:before", space_before_pt);
+    apply_indent_attr(spacing, "w:after", space_after_pt);
+    cleanup_if_empty(p_pr, spacing);
+    cleanup_if_empty(paragraph, p_pr);
+  }
+  dirty_ = true;
+}
+
+void Document::set_paragraph_line_spacing_pt(std::size_t paragraph_index,
+                                             std::optional<int> line_spacing_pt) {
+  pugi::xml_node paragraph = nth_child_named(document_body(*xml_), "w:p", paragraph_index);
+  if (!paragraph) {
+    throw std::out_of_range("paragraph_index out of range");
+  }
+  if (line_spacing_pt && *line_spacing_pt <= 0) {
+    throw std::invalid_argument("line spacing must be greater than zero");
+  }
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties(paragraph);
+  pugi::xml_node spacing = child_named(p_pr, "w:spacing");
+  if (!spacing && line_spacing_pt) {
+    spacing = p_pr.append_child("w:spacing");
+  }
+  if (spacing) {
+    if (spacing.attribute("w:line")) {
+      spacing.remove_attribute("w:line");
+    }
+    if (spacing.attribute("w:lineRule")) {
+      spacing.remove_attribute("w:lineRule");
+    }
+    if (line_spacing_pt.has_value()) {
+      const auto twips =
+          std::to_string(*line_spacing_pt * static_cast<int>(kTwipsPerPoint));
+      spacing.append_attribute("w:line").set_value(twips.c_str());
+      spacing.append_attribute("w:lineRule").set_value("exact");
+    }
+    cleanup_if_empty(p_pr, spacing);
+    cleanup_if_empty(paragraph, p_pr);
+  }
+  dirty_ = true;
+}
+
+void Document::set_paragraph_pagination(std::size_t paragraph_index,
+                                        std::optional<bool> keep_together,
+                                        std::optional<bool> keep_with_next,
+                                        std::optional<bool> page_break_before) {
+  pugi::xml_node paragraph = nth_child_named(document_body(*xml_), "w:p", paragraph_index);
+  if (!paragraph) {
+    throw std::out_of_range("paragraph_index out of range");
+  }
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties(paragraph);
+  set_on_off_property(p_pr, "w:keepLines", keep_together);
+  set_on_off_property(p_pr, "w:keepNext", keep_with_next);
+  set_on_off_property(p_pr, "w:pageBreakBefore", page_break_before);
+  cleanup_if_empty(paragraph, p_pr);
+  dirty_ = true;
+}
+
 void Document::set_page_size_pt(int width_pt, int height_pt) {
   if (width_pt <= 0 || height_pt <= 0) {
     throw std::invalid_argument("page size must be greater than zero");
@@ -1242,8 +1789,21 @@ void Document::set_page_size_pt(int width_pt, int height_pt) {
   dirty_ = true;
 }
 
+void Document::set_page_orientation(PageOrientation orientation) {
+  pugi::xml_node sect_pr = document_sect_pr(*xml_);
+  pugi::xml_node pg_sz = get_or_add_child(sect_pr, "w:pgSz");
+  const char* value = orientation_value(orientation);
+  if (pg_sz.attribute("w:orient")) {
+    pg_sz.attribute("w:orient").set_value(value);
+  } else {
+    pg_sz.append_attribute("w:orient").set_value(value);
+  }
+  dirty_ = true;
+}
+
 void Document::set_page_margins_pt(const PageMargins& margins) {
-  if (margins.top_pt < 0 || margins.right_pt < 0 || margins.bottom_pt < 0 || margins.left_pt < 0) {
+  if (margins.top_pt < 0 || margins.right_pt < 0 || margins.bottom_pt < 0 || margins.left_pt < 0 ||
+      margins.header_pt < 0 || margins.footer_pt < 0 || margins.gutter_pt < 0) {
     throw std::invalid_argument("page margins cannot be negative");
   }
   pugi::xml_node sect_pr = document_sect_pr(*xml_);
@@ -1262,6 +1822,9 @@ void Document::set_page_margins_pt(const PageMargins& margins) {
   set_attr("w:right", margins.right_pt);
   set_attr("w:bottom", margins.bottom_pt);
   set_attr("w:left", margins.left_pt);
+  set_attr("w:header", margins.header_pt);
+  set_attr("w:footer", margins.footer_pt);
+  set_attr("w:gutter", margins.gutter_pt);
   dirty_ = true;
 }
 
@@ -1271,6 +1834,26 @@ void Document::add_picture(const std::filesystem::path& image_path) {
 
 void Document::add_picture(const std::filesystem::path& image_path, const PictureSize& size) {
   const ImageInfo image = load_image_info(image_path);
+  const std::int64_t cx_emu =
+      scaled_emu(image.cx_emu, image.cy_emu, size.width_pt, size.height_pt, true);
+  const std::int64_t cy_emu =
+      scaled_emu(image.cx_emu, image.cy_emu, size.width_pt, size.height_pt, false);
+  const std::string rel_id = register_picture_part(package_, image);
+  pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
+  append_picture_run(*xml_, paragraph, rel_id, image, cx_emu, cy_emu);
+  dirty_ = true;
+}
+
+void Document::add_picture_data(const std::vector<std::uint8_t>& image_bytes,
+                                const std::string& extension) {
+  add_picture_data(image_bytes, extension, {}, "image");
+}
+
+void Document::add_picture_data(const std::vector<std::uint8_t>& image_bytes,
+                                const std::string& extension, const PictureSize& size,
+                                const std::string& filename_hint) {
+  const std::string filename = filename_hint + "." + extension;
+  const ImageInfo image = load_image_info(image_bytes, extension, filename);
   const std::int64_t cx_emu =
       scaled_emu(image.cx_emu, image.cy_emu, size.width_pt, size.height_pt, true);
   const std::int64_t cy_emu =
@@ -1306,8 +1889,96 @@ void Document::add_picture_to_table_cell(std::size_t table_index, std::size_t ro
   dirty_ = true;
 }
 
+void Document::add_picture_data_to_table_cell(std::size_t table_index, std::size_t row_index,
+                                              std::size_t col_index,
+                                              const std::vector<std::uint8_t>& image_bytes,
+                                              const std::string& extension,
+                                              const std::string& filename_hint) {
+  add_picture_data_to_table_cell(table_index, row_index, col_index, image_bytes, extension, {},
+                                 filename_hint);
+}
+
+void Document::add_picture_data_to_table_cell(std::size_t table_index, std::size_t row_index,
+                                              std::size_t col_index,
+                                              const std::vector<std::uint8_t>& image_bytes,
+                                              const std::string& extension, const PictureSize& size,
+                                              const std::string& filename_hint) {
+  const std::string filename = filename_hint + "." + extension;
+  const ImageInfo image = load_image_info(image_bytes, extension, filename);
+  const std::int64_t cx_emu =
+      scaled_emu(image.cx_emu, image.cy_emu, size.width_pt, size.height_pt, true);
+  const std::int64_t cy_emu =
+      scaled_emu(image.cx_emu, image.cy_emu, size.width_pt, size.height_pt, false);
+  const std::string rel_id = register_picture_part(package_, image);
+
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  pugi::xml_node paragraph = cell.append_child("w:p");
+  append_picture_run(*xml_, paragraph, rel_id, image, cx_emu, cy_emu);
+  dirty_ = true;
+}
+
+Paragraph Document::add_hyperlink(const std::string& text, const std::string& url,
+                                  ParagraphAlignment alignment, const RunStyle& style) {
+  const std::string rel_id =
+      register_external_relationship(package_, kHyperlinkRelationshipType, url);
+  const std::size_t paragraph_index = body_paragraph_count(*xml_);
+  pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
+  apply_alignment(paragraph, alignment);
+  append_hyperlink(paragraph, rel_id, text, style);
+  dirty_ = true;
+  return Paragraph(text, alignment, style, false, {Run(text, style)}, {}, -1, {},
+                   {HyperlinkInfo{text, url}}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
+}
+
+Paragraph Document::add_hyperlink_to_table_cell(std::size_t table_index, std::size_t row_index,
+                                                std::size_t col_index, const std::string& text,
+                                                const std::string& url, const RunStyle& style) {
+  const std::string rel_id =
+      register_external_relationship(package_, kHyperlinkRelationshipType, url);
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  const std::size_t cell_paragraph_index = paragraph_index_in_cell(cell);
+  pugi::xml_node paragraph = cell.append_child("w:p");
+  append_hyperlink(paragraph, rel_id, text, style);
+  dirty_ = true;
+  return Paragraph(text, ParagraphAlignment::Inherit, style, false, {Run(text, style)}, {}, -1,
+                   {}, {HyperlinkInfo{text, url}},
+                   bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
+                                             cell_paragraph_index));
+}
+
+std::size_t Document::add_comment(std::size_t paragraph_index, const std::string& text,
+                                  const std::string& author, const std::string& initials) {
+  pugi::xml_node paragraph = nth_child_named(document_body(*xml_), "w:p", paragraph_index);
+  if (!paragraph) {
+    throw std::out_of_range("paragraph_index out of range");
+  }
+
+  ensure_comments_part(package_);
+  pugi::xml_document comments_xml = parse_package_xml(package_, kCommentsEntry);
+  pugi::xml_node comments = child_named(comments_xml, "w:comments");
+  const std::size_t comment_id = next_comment_id(comments_xml);
+  pugi::xml_node comment = comments.append_child("w:comment");
+  comment.append_attribute("w:id").set_value(std::to_string(comment_id).c_str());
+  comment.append_attribute("w:author").set_value(author.c_str());
+  comment.append_attribute("w:initials").set_value(initials.c_str());
+  pugi::xml_node comment_paragraph = comment.append_child("w:p");
+  set_paragraph_text(comment_paragraph, text);
+  package_.set_entry(kCommentsEntry, xml_to_bytes(comments_xml));
+
+  append_comment_markers(paragraph, comment_id);
+  dirty_ = true;
+  return comment_id;
+}
+
 std::vector<Paragraph> Document::paragraphs() const {
   std::vector<Paragraph> result;
+  const RelTargetMap hyperlink_targets =
+      relationship_targets_by_type(package_, kHyperlinkRelationshipType);
+  std::size_t paragraph_index = 0;
   for (const pugi::xml_node& child : document_body(*xml_).children()) {
     if (std::string_view(child.name()) != "w:p") {
       continue;
@@ -1317,7 +1988,10 @@ std::vector<Paragraph> Document::paragraphs() const {
     collect_text(child, text);
     result.emplace_back(text, paragraph_alignment_from_xml(child), first_run_style_from_xml(child),
                         paragraph_has_page_break(child), runs_from_xml(child), style_id,
-                        heading_level_from_style_id(style_id));
+                        heading_level_from_style_id(style_id), paragraph_format_from_xml(child),
+                        hyperlinks_from_xml(child, hyperlink_targets),
+                        bind_body_paragraph(*xml_, dirty_, paragraph_index));
+    ++paragraph_index;
   }
   return result;
 }
@@ -1348,6 +2022,18 @@ PageSize Document::page_size_pt() const {
   return size;
 }
 
+PageOrientation Document::page_orientation() const {
+  const pugi::xml_node sect_pr = child_named(document_body(*xml_), "w:sectPr");
+  if (!sect_pr) {
+    return PageOrientation::Portrait;
+  }
+  const pugi::xml_node pg_sz = child_named(sect_pr, "w:pgSz");
+  if (!pg_sz) {
+    return PageOrientation::Portrait;
+  }
+  return orientation_from_value(pg_sz.attribute("w:orient").value());
+}
+
 PageMargins Document::page_margins_pt() const {
   PageMargins margins;
   const pugi::xml_node sect_pr = child_named(document_body(*xml_), "w:sectPr");
@@ -1362,8 +2048,38 @@ PageMargins Document::page_margins_pt() const {
   margins.right_pt = pg_mar.attribute("w:right").as_int() / kTwipsPerPoint;
   margins.bottom_pt = pg_mar.attribute("w:bottom").as_int() / kTwipsPerPoint;
   margins.left_pt = pg_mar.attribute("w:left").as_int() / kTwipsPerPoint;
+  margins.header_pt = pg_mar.attribute("w:header").as_int() / kTwipsPerPoint;
+  margins.footer_pt = pg_mar.attribute("w:footer").as_int() / kTwipsPerPoint;
+  margins.gutter_pt = pg_mar.attribute("w:gutter").as_int() / kTwipsPerPoint;
   return margins;
 }
+
+std::vector<CommentInfo> Document::comments() const {
+  std::vector<CommentInfo> result;
+  if (!package_.has_entry(kCommentsEntry)) {
+    return result;
+  }
+  const pugi::xml_document comments_xml = parse_package_xml(package_, kCommentsEntry);
+  const pugi::xml_node comments = child_named(comments_xml, "w:comments");
+  for (const pugi::xml_node& comment : comments.children("w:comment")) {
+    CommentInfo info;
+    info.id = static_cast<std::size_t>(comment.attribute("w:id").as_uint());
+    info.author = comment.attribute("w:author").value();
+    info.initials = comment.attribute("w:initials").value();
+    for (const pugi::xml_node& paragraph : comment.children("w:p")) {
+      std::string paragraph_text;
+      collect_text(paragraph, paragraph_text);
+      if (!info.text.empty()) {
+        info.text.push_back('\n');
+      }
+      info.text += paragraph_text;
+    }
+    result.push_back(std::move(info));
+  }
+  return result;
+}
+
+std::size_t Document::comment_count() const { return comments().size(); }
 
 std::vector<PictureSize> Document::picture_sizes_pt() const {
   std::vector<PictureSize> result;

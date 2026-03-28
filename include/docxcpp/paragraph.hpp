@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,25 @@ struct RunStyle {
   std::string highlight;
 };
 
+struct ParagraphFormat {
+  std::optional<int> left_indent_pt;
+  std::optional<int> right_indent_pt;
+  std::optional<int> first_line_indent_pt;
+  std::optional<int> space_before_pt;
+  std::optional<int> space_after_pt;
+  std::optional<int> line_spacing_pt;
+  std::optional<bool> keep_together;
+  std::optional<bool> keep_with_next;
+  std::optional<bool> page_break_before;
+};
+
+struct HyperlinkInfo {
+  std::string text;
+  std::string url;
+};
+
+struct ParagraphBinding;
+
 class Run {
 public:
   explicit Run(std::string text = {}, RunStyle style = {});
@@ -39,7 +60,9 @@ class Paragraph {
 public:
   explicit Paragraph(std::string text = {}, ParagraphAlignment alignment = ParagraphAlignment::Inherit,
                      RunStyle first_run_style = {}, bool has_page_break = false,
-                     std::vector<Run> runs = {}, std::string style_id = {}, int heading_level = -1);
+                     std::vector<Run> runs = {}, std::string style_id = {}, int heading_level = -1,
+                     ParagraphFormat format = {}, std::vector<HyperlinkInfo> hyperlinks = {},
+                     std::shared_ptr<ParagraphBinding> binding = {});
 
   const std::string& text() const noexcept;
   ParagraphAlignment alignment() const noexcept;
@@ -48,6 +71,9 @@ public:
   const std::vector<Run>& runs() const noexcept;
   const std::string& style_id() const noexcept;
   int heading_level() const noexcept;
+  const ParagraphFormat& format() const noexcept;
+  const std::vector<HyperlinkInfo>& hyperlinks() const noexcept;
+  Run add_run(const std::string& text, const RunStyle& style = {});
 
 private:
   std::string text_;
@@ -57,6 +83,9 @@ private:
   std::vector<Run> runs_;
   std::string style_id_;
   int heading_level_;
+  ParagraphFormat format_;
+  std::vector<HyperlinkInfo> hyperlinks_;
+  std::shared_ptr<ParagraphBinding> binding_;
 };
 
 }  // namespace docxcpp

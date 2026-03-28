@@ -1,213 +1,241 @@
 # docxcpp vs python-docx
 
-This document compares the current C++ port under `cpp/` with the upstream `python-docx` feature set in this repository.
+This file is a fresh comparison of the current C++ port in `cpp/` against the upstream `python-docx` implementation in this repository.
 
-Comparison baseline:
+It is based on the code that exists today:
 
-- `docxcpp`: current implementation in `cpp/include/docxcpp/*.hpp`, `cpp/src/*.cpp`, and `cpp/tests/*.cpp`
-- `python-docx`: user documentation under `docs/user/` and API/docs coverage in `src/docx/` and `tests/`
+- C++ side: `cpp/include/docxcpp/*.hpp`, `cpp/src/*.cpp`, `cpp/tests/*.cpp`
+- Python side: public behavior and feature surface reflected in `src/docx/`, `docs/user/`, and tests
 
-Status legend:
+Status labels used below:
 
-- `Supported`: implemented and covered by current C++ tests
+- `Supported`: available in the current C++ port and covered by current tests
 - `Partial`: available in a narrower or lower-level form than `python-docx`
-- `Not supported`: not currently exposed by the C++ port
+- `Missing`: not currently exposed by the C++ port
 
-## Summary
+## Current Position
 
-`docxcpp` already covers a practical subset of `python-docx`:
+`docxcpp` is no longer just a minimal exporter. It now covers a practical subset of Word document generation and inspection:
 
-- create/open/save `.docx`
-- add paragraphs, headings, page breaks
-- set a limited set of run styles
-- create tables, write cells, append cell paragraphs, merge cells
-- insert inline pictures in body and table cells
-- set page size and page margins
-- read back paragraphs, runs, headings, tables, pictures, and basic section page settings
+- open, create, and save `.docx`
+- add paragraphs, headings, page breaks, and mixed-run content
+- append runs to bound paragraph objects with `Paragraph::add_run()`
+- write a useful subset of run formatting
+- create tables, write cell content, append extra cell paragraphs, and merge cells
+- insert inline pictures from file paths or byte buffers
+- insert external hyperlinks
+- write basic paragraph-anchored comments
+- set page size, orientation, margins, header/footer distance, and gutter
+- set paragraph alignment, indentation, spacing, fixed line spacing, and basic pagination flags
+- read back paragraphs, runs, heading/style ids, paragraph formats, tables, comments, and picture metadata
 
-The current gap is that `docxcpp` is still a focused document generator/reader, while `python-docx` is a broader document object model with richer editing, styling, section, header/footer, and table APIs.
+At the same time, `python-docx` is still much broader. It offers a richer document object model, more editing-oriented APIs, deeper style/section coverage, and more complete support for Word concepts.
 
-## Feature Matrix
+## Feature Snapshot
 
-| Area | python-docx | docxcpp | Notes |
+### Core document lifecycle
+
+| Feature | python-docx | docxcpp | Notes |
 | --- | --- | --- | --- |
-| Open document | Supported | Supported | Both can open existing `.docx` files. |
-| Create blank document from template | Supported | Supported | `docxcpp` uses the bundled default template directory. |
-| Save document | Supported | Supported | Both can write `.docx`. |
-| Append paragraph | Supported | Supported | `docxcpp::Document::add_paragraph()`. |
-| Insert paragraph before existing paragraph | Supported | Not supported | `python-docx` has `Paragraph.insert_paragraph_before()`. |
-| Append heading/title | Supported | Supported | `docxcpp` supports levels `0-9`. |
-| Apply paragraph style by style name/object | Supported | Partial | `docxcpp` supports heading style ids indirectly and paragraph alignment, but not arbitrary named paragraph styles. |
-| Add page break | Supported | Supported | `docxcpp::Document::add_page_break()`. |
-| Read paragraph list | Supported | Supported | `docxcpp::Document::paragraphs()`. |
-| Paragraph text | Supported | Supported | `Paragraph::text()`. |
-| Paragraph alignment | Supported | Partial | `docxcpp` supports read/write for left/center/right/justify/inherit only. |
-| Rich paragraph format object | Supported | Not supported | No C++ equivalent of `ParagraphFormat`. |
-| Paragraph indentation | Supported | Not supported | No left/right/first-line indent API yet. |
-| Paragraph spacing | Supported | Not supported | No before/after spacing API yet. |
-| Line spacing | Supported | Not supported | No line spacing API yet. |
-| Pagination flags (`keep_together`, etc.) | Supported | Not supported | No equivalent in C++ yet. |
-| Paragraph style readback | Supported | Partial | `Paragraph::style_id()` and `Paragraph::heading_level()` only. |
-| Run list | Supported | Supported | `Paragraph::runs()`. |
-| Add run to existing paragraph | Supported | Not supported | `python-docx` exposes mutable `Paragraph.add_run()`. |
-| Run text | Supported | Supported | Read side only in C++; writing always builds a single run per added paragraph. |
-| Run bold/italic/underline | Supported | Partial | C++ supports these three, but not the broader font model. |
-| Run font size | Supported | Supported | Current C++ uses point integers. |
-| Run font name | Supported | Supported | Basic `ascii`/`hAnsi` write/read. |
-| Run font color | Supported | Supported | RGB hex only. |
-| Run highlight | Supported | Supported | Token-based highlight value support. |
-| Tabs in run text | Supported | Partial | Read side maps `w:tab` to `\t`; no dedicated write-side tab-stop API. |
-| Hyperlinks | Supported | Not supported | No hyperlink model or writer in C++. |
-| Comments | Supported | Not supported | No comments part, anchors, metadata, or replies in C++. |
-| Tables: add table | Supported | Supported | `docxcpp::Document::add_table()`. |
-| Tables: style assignment | Supported | Partial | C++ writes a fixed `TableGrid` style, no public table-style API. |
-| Tables: read tables | Supported | Supported | `docxcpp::Document::tables()`. |
-| Tables: row/column collections | Supported | Partial | C++ exposes rows and cells, but no explicit column abstraction. |
-| Tables: add row/column after creation | Supported | Not supported | No incremental structural editing API yet. |
-| Tables: access cell by object model | Supported | Partial | C++ uses row/cell vectors on read and index-based setters on write. |
-| Tables: cell text | Supported | Supported | `TableCell::text()` and `set_table_cell()`. |
-| Tables: multiple paragraphs in cell | Supported | Supported | `add_table_cell_paragraph()` and readback concatenation. |
-| Tables: nested tables | Supported | Not supported | No nested table writer/reader in C++. |
-| Tables: merged cells | Supported | Partial | C++ supports merge writing and reads `grid_span`/`vertical_merge`, but lacks normalized layout-grid helpers. |
-| Tables: omitted cells / layout-grid helpers | Supported | Not supported | No equivalent to `grid_cols_before` / `grid_cols_after`. |
-| Inline pictures in body | Supported | Supported | JPEG/PNG only in current C++. |
-| Inline pictures in table cell | Supported | Supported | Explicit C++ helper exists. |
-| Picture sizing | Supported | Supported | Width/height in points, aspect ratio preserved when one side omitted. |
-| File-like image input | Supported | Not supported | C++ currently accepts filesystem paths only. |
-| Floating shapes | Not supported | Not supported | Neither side supports this in normal API. |
-| Read picture metadata | Partial | Supported | C++ exposes size, rel id, package target, and placement info. |
-| Count images | Partial | Supported | `docxcpp::Document::image_count()`. |
-| Sections collection | Supported | Not supported | C++ currently treats only the trailing document section implicitly. |
-| Add section | Supported | Not supported | No multi-section editing API in C++. |
-| Page size | Supported | Supported | C++ reads/writes width and height. |
-| Page orientation | Supported | Not supported | No orientation API in C++ yet. |
-| Margins | Supported | Partial | C++ supports top/right/bottom/left only; no gutter/header/footer distances. |
-| Header/footer content | Supported | Not supported | No header/footer parts or references in C++. |
-| Styles collection | Supported | Not supported | No document style catalog API in C++. |
-| Add/delete custom styles | Supported | Not supported | No equivalent in C++. |
-| Apply table style by name | Supported | Not supported | Only fixed `TableGrid` output at the moment. |
-| Apply character style by name | Supported | Not supported | No style hierarchy model in C++. |
-| Document settings object | Supported | Not supported | No settings API in C++. |
+| Open existing document | Supported | Supported | Both can load `.docx`. |
+| Create blank document | Supported | Supported | `docxcpp` uses the bundled template package. |
+| Save document | Supported | Supported | Both write valid `.docx`. |
 
-## What docxcpp Does Well Already
+### Paragraphs and runs
 
-Compared with many "first pass" ports, the current C++ implementation is already beyond simple text export:
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Add paragraph | Supported | Supported | `Document::add_paragraph()`. |
+| Insert paragraph before another paragraph | Supported | Missing | No equivalent mutable paragraph API in C++. |
+| Add heading/title | Supported | Supported | C++ supports heading levels `0-9`. |
+| Add page break | Supported | Supported | `Document::add_page_break()`. |
+| Mixed runs in one paragraph | Supported | Supported | C++ writes via `std::vector<Run>`. |
+| Append run to an existing paragraph object | Supported | Partial | `Paragraph::add_run()` is available for document-bound paragraph handles, but the editable object model is still much smaller than `python-docx`. |
+| Read paragraphs | Supported | Supported | `Document::paragraphs()`. |
+| Read runs | Supported | Supported | `Paragraph::runs()`. |
+| Read paragraph style info | Supported | Partial | C++ exposes `style_id()` and derived `heading_level()` only. |
 
-- It produces valid `.docx` files with paragraphs, headings, page breaks, tables, and inline pictures.
-- It supports useful direct formatting on generated text: bold, italic, underline, size, RGB color, font, highlight, and alignment.
-- It can place pictures both in the document body and inside table cells.
-- It can read back structured content rather than only writing:
-  - paragraphs
-  - runs
-  - heading style ids
-  - tables
-  - merge metadata
-  - picture metadata and placement
-  - page size and margins
-- It is already validated by C++ tests and by opening generated output through `python-docx`.
+### Text formatting
 
-## Main Gaps Relative to python-docx
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Bold / italic / underline | Supported | Partial | C++ supports these three, but not the wider font feature set. |
+| Font size | Supported | Supported | Integer points on the C++ side. |
+| Font name | Supported | Supported | Basic `ascii` / `hAnsi` support. |
+| Font color | Supported | Supported | RGB hex only in C++. |
+| Highlight | Supported | Supported | Token-based Word highlight values. |
+| Line breaks in run text | Supported | Supported | C++ writes inline line breaks and reads them back. |
+| Tabs in run text | Supported | Partial | C++ reads `w:tab` as `\t`, but has no dedicated write-side tab-stop/text API. |
+| Character styles by name | Supported | Missing | No style hierarchy API in C++. |
 
-The largest missing areas are:
+### Paragraph formatting
 
-1. Rich text editing object model
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Alignment | Supported | Partial | C++ supports left/center/right/justify/inherit. |
+| Left/right/first-line indent | Supported | Supported | Read/write in points. |
+| Space before / after | Supported | Supported | Read/write in points. |
+| Line spacing | Supported | Partial | C++ currently supports fixed line spacing in points. |
+| Pagination flags | Supported | Partial | C++ supports `keep_together`, `keep_with_next`, `page_break_before`. |
+| Tab stops | Supported | Missing | Not exposed in current C++ API. |
+| Widow/orphan control and richer paragraph flags | Supported | Missing | Not yet implemented. |
+| Full paragraph format object model | Supported | Partial | `ParagraphFormat` exists, but is intentionally narrower. |
 
-- `python-docx` lets you mutate paragraph/run objects directly, append runs, set richer font properties, and work with hyperlinks.
-- `docxcpp` is still centered on higher-level document methods and lightweight read models.
+### Hyperlinks and comments
 
-2. Full paragraph formatting
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| External hyperlink writing | Supported | Supported | Body and table-cell paragraph helpers exist. |
+| Hyperlink object model on read | Supported | Partial | C++ exposes paragraph-level `HyperlinkInfo` snapshots via `Paragraph::hyperlinks()`, but not a full mutable hyperlink object graph. |
+| Hyperlink target readback | Supported | Supported | Hyperlink URL readback is available through `Paragraph::hyperlinks()`. |
+| Comment writing | Supported | Partial | C++ supports basic paragraph-anchored comment insertion. |
+| Comment readback | Supported | Partial | `comments()` / `comment_count()` read the comments part, not full anchors/ranges. |
+| Comment range selection on arbitrary runs | Supported | Missing | C++ does not support arbitrary run-range anchors. |
+| Replies / resolved state / richer comment editing | Supported | Missing | Not implemented in C++. |
 
-- `python-docx` exposes indentation, tab stops, paragraph spacing, line spacing, and pagination flags.
-- `docxcpp` currently exposes only alignment and page-break detection.
+### Tables
 
-3. Rich table model
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Add table | Supported | Supported | `Document::add_table()`. |
+| Read tables | Supported | Supported | `Document::tables()`. |
+| Write cell text | Supported | Supported | String and multi-run overloads are available. |
+| Append extra paragraphs in a cell | Supported | Supported | `add_table_cell_paragraph()`. |
+| Merge cells | Supported | Partial | Write support plus readback of `grid_span` / `vertical_merge`. |
+| Table style selection | Supported | Partial | C++ writes fixed `TableGrid`; no public style selection API. |
+| Add rows/columns after creation | Supported | Missing | No incremental structure editing. |
+| Nested tables | Supported | Missing | Not supported in current C++. |
+| Layout-grid helpers for omitted/merged cells | Supported | Missing | No `python-docx`-style helpers here. |
 
-- `python-docx` has a more complete table DOM, including row/column objects, incremental row insertion, nested tables, and helpers for non-uniform tables.
-- `docxcpp` supports practical table creation and merge metadata, but not a full layout-grid abstraction.
+### Pictures
 
-4. Section and page-layout model
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Inline picture in body | Supported | Supported | PNG / JPEG currently. |
+| Inline picture in table cell | Supported | Supported | Dedicated C++ helpers exist. |
+| Picture sizing | Supported | Supported | Width/height in points, aspect ratio preserved when one side is omitted. |
+| File-like image input | Supported | Partial | C++ uses byte-buffer APIs as the equivalent (`add_picture_data*`). |
+| Floating shapes | Not supported | Not supported | Neither side exposes this as a normal high-level API. |
+| Read picture metadata | Partial | Supported | C++ exposes size, relationship id, package target, and placement info. |
+| Count images | Partial | Supported | `Document::image_count()`. |
 
-- `python-docx` supports multiple sections, section breaks, orientation, header/footer distances, and header/footer content access.
-- `docxcpp` currently supports only single-section page size and four margins.
+### Sections and page layout
 
-5. Styles and advanced document features
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Page size | Supported | Supported | Read/write in points. |
+| Orientation | Supported | Supported | Portrait / landscape supported. |
+| Margins | Supported | Supported | Top/right/bottom/left supported. |
+| Header/footer distance | Supported | Supported | Included in `PageMargins`. |
+| Gutter | Supported | Supported | Included in `PageMargins`. |
+| Sections collection | Supported | Missing | C++ currently treats only the trailing section implicitly. |
+| Add section / section break | Supported | Missing | No multi-section writer API. |
+| Header/footer content | Supported | Missing | No header/footer parts or references yet. |
 
-- `python-docx` has style catalogs, custom styles, comments, settings access, and broader document-part coverage.
-- `docxcpp` does not yet expose those subsystems.
+### Styles and document-wide subsystems
 
-## Read-Side Comparison
+| Feature | python-docx | docxcpp | Notes |
+| --- | --- | --- | --- |
+| Styles collection | Supported | Missing | No style catalog API in C++. |
+| Custom style creation/deletion | Supported | Missing | Not implemented. |
+| Apply named paragraph style | Supported | Partial | Heading styles only, indirectly. |
+| Apply named table style | Supported | Missing | Fixed `TableGrid` only. |
+| Settings object | Supported | Missing | No settings API in C++. |
+| Broader document parts access | Supported | Missing | Coverage remains intentionally narrow. |
 
-On read APIs, the current situation is:
+## Read-Side Reality
 
-### python-docx
+The read side is now meaningful, but still selective.
 
-- broader and more object-oriented
-- preserves more of the Word document model
-- supports styles, sections, comments, headers/footers, and more detailed formatting APIs
+Current `docxcpp` read APIs cover:
 
-### docxcpp
+- `Document::paragraphs()`
+- `Paragraph::text()`
+- `Paragraph::alignment()`
+- `Paragraph::first_run_style()`
+- `Paragraph::runs()`
+- `Paragraph::style_id()`
+- `Paragraph::heading_level()`
+- `Paragraph::format()`
+- `Paragraph::has_page_break()`
+- `Paragraph::hyperlinks()`
+- `Document::tables()`
+- `TableRow::cells()`
+- `TableCell::text()`
+- `TableCell::grid_span()`
+- `TableCell::vertical_merge()`
+- `Document::page_size_pt()`
+- `Document::page_orientation()`
+- `Document::page_margins_pt()`
+- `Document::comments()`
+- `Document::comment_count()`
+- `Document::picture_sizes_pt()`
+- `Document::pictures()`
+- `Document::image_count()`
 
-- strong on the subset it targets
-- convenient for inspection of generated documents
-- currently exposes these read models:
-  - `Document::paragraphs()`
-  - `Paragraph::text()`
-  - `Paragraph::alignment()`
-  - `Paragraph::first_run_style()`
-  - `Paragraph::runs()`
-  - `Paragraph::style_id()`
-  - `Paragraph::heading_level()`
-  - `Paragraph::has_page_break()`
-  - `Document::tables()`
-  - `TableRow::cells()`
-  - `TableCell::text()`
-  - `TableCell::grid_span()`
-  - `TableCell::vertical_merge()`
-  - `Document::page_size_pt()`
-  - `Document::page_margins_pt()`
-  - `Document::picture_sizes_pt()`
-  - `Document::pictures()`
-  - `Document::image_count()`
+What is still missing relative to `python-docx` is just as important:
 
-## Compatibility Notes
+- no section collection
+- no header/footer read model
+- no styles catalog
+- no editable paragraph/run object graph
+- no broader Word part coverage
 
-- `python-docx` is the reference implementation here; `docxcpp` is not yet API-compatible with it.
-- The current C++ API is intentionally simpler and more index-based.
-- Generated `.docx` files from the C++ side have been validated both by C++ tests and by reading them with `python-docx`.
-- Table merge readback semantics differ from the higher-level approximations `python-docx` provides for merged cells.
+## Biggest Gaps
 
-## Suggested Next Priorities
+The largest practical gaps compared with `python-docx` are:
 
-If the goal is to move `docxcpp` closer to `python-docx`, the highest-value next steps are:
+1. Editing model
+`python-docx` is built around mutable paragraph/run/table objects. `docxcpp` is still centered on document-level helper methods and lightweight snapshots.
 
-1. Add a mutable paragraph/run writer API
-- `Paragraph::add_run()`
-- mixed-format paragraphs
-- richer run/font options
+2. Styles
+`python-docx` has a real style system. `docxcpp` currently offers direct formatting plus heading-style shortcuts, but not a full style catalog.
 
-2. Expand paragraph formatting
-- indent
-- spacing
-- line spacing
-- page-break-before and related flags
+3. Sections and headers/footers
+`python-docx` supports sections as first-class objects. `docxcpp` currently supports only single-section page settings.
 
-3. Expand section APIs
-- orientation
-- multi-section support
+4. Hyperlink/comment depth
+The C++ port now has useful basic support, but not the richer object model and anchor semantics available in `python-docx`.
+
+5. Table richness
+The current C++ table support is practical for generation, but still far from the fuller table DOM in `python-docx`.
+
+## Recommended Next Steps
+
+If the goal is to move the C++ port closer to `python-docx`, the highest-value next steps are:
+
+1. Deepen paragraph editing further
+- broaden the writable paragraph object model beyond `Paragraph::add_run()`
+- append richer content types to existing paragraphs
+- richer run/font properties
+
+2. Deepen hyperlink/comment support
+- richer hyperlink objects beyond `HyperlinkInfo`
+- comment anchor range support beyond whole-paragraph insertion
+- richer comment editing metadata
+
+3. Expand paragraph formatting
+- tab stops
+- richer line-spacing modes
+- widow/orphan control and more paragraph flags
+
+4. Add section and header/footer support
+- multiple sections
+- section breaks
 - header/footer references and content
 
-4. Improve table reading/writing
-- add row
+5. Improve table APIs
+- add row/column APIs
 - nested tables
-- normalized layout-grid helpers for merged/omitted cells
+- better merged/omitted-cell helpers
 
-5. Add style system support
-- document styles collection
-- apply named paragraph/table/character styles
-- custom style creation
+6. Build a style system
+- style catalog access
+- named paragraph/table/character style application
+- custom styles
 
 ## Bottom Line
 
-`python-docx` is still much broader and closer to a full Word document object model.
+`python-docx` remains the fuller and more editing-oriented library.
 
-`docxcpp` has already reached a useful milestone: it can generate and read back a meaningful subset of Word documents with text, formatting, tables, pictures, and basic page layout. For report generation, structured export, and controlled document templates, it is already practical. For full-feature parity with `python-docx`, the biggest missing work is in styles, sections, headers/footers, richer text editing, and advanced table handling.
+`docxcpp` is already useful for controlled document generation and inspection: text, mixed formatting, tables, pictures, page layout, basic hyperlinks, and basic comments are all in place. The remaining work is mainly about depth: richer editing objects, richer read models, styles, sections, and broader Word feature coverage.
