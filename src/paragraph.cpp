@@ -4,6 +4,8 @@
 #include <utility>
 
 #include "internal/document_model_support.hpp"
+#include "internal/paragraph_support.hpp"
+#include "internal/style_support.hpp"
 
 namespace docxcpp {
 
@@ -58,19 +60,34 @@ Run Paragraph::add_run(const std::string& text, const RunStyle& style) {
   }
 
   pugi::xml_node run = paragraph.append_child("w:r");
-  apply_run_style_for_model(run, style);
+  apply_run_style_for_model(run, style, binding_->style_catalog.get());
   append_run_text_for_model(run, text);
   if (binding_->dirty != nullptr) {
     *binding_->dirty = true;
   }
 
-  Run added_run(text, style);
+  Run added_run(text, resolve_run_style_reference(style, binding_->style_catalog.get()));
   if (runs_.empty()) {
     first_run_style_ = style;
   }
   runs_.push_back(added_run);
   text_ += text;
   return added_run;
+}
+
+Paragraph Paragraph::insert_paragraph_before(const std::string& text, ParagraphAlignment alignment) {
+  return insert_paragraph_before(std::vector<Run>{Run(text, {})}, alignment);
+}
+
+Paragraph Paragraph::insert_paragraph_before(const std::vector<Run>& runs,
+                                             ParagraphAlignment alignment) {
+  if (!binding_) {
+    throw std::logic_error("paragraph is not bound to a writable document");
+  }
+
+  Paragraph inserted;
+  insert_paragraph_before_binding(*binding_, runs, alignment, inserted);
+  return inserted;
 }
 
 }  // namespace docxcpp

@@ -13,11 +13,13 @@
 #include "pugixml.hpp"
 
 #include "internal/document_model_support.hpp"
+#include "internal/default_template_support.hpp"
 #include "internal/header_footer_support.hpp"
 #include "internal/hyperlink_comment_support.hpp"
 #include "internal/layout_support.hpp"
 #include "internal/media_support.hpp"
 #include "internal/paragraph_support.hpp"
+#include "internal/style_support.hpp"
 
 namespace docxcpp {
 
@@ -48,8 +50,9 @@ bool needs_preserve_space(const std::string& text) {
 
 pugi::xml_node child_named(const pugi::xml_node& parent, const char* name);
 std::size_t count_named_children(pugi::xml_node parent, const char* name);
-Table table_from_xml(const pugi::xml_node& table_node);
+Table table_from_xml(const pugi::xml_node& table_node, const StyleCatalog* style_catalog = nullptr);
 Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_t cols,
+                             const std::string& style_id, const std::string& style_name,
                              pugi::xml_node insert_before = {});
 
 const char* alignment_value(ParagraphAlignment alignment) {
@@ -320,6 +323,7 @@ void append_table_grid_column(pugi::xml_node table, const std::string& width) {
 }
 
 Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_t cols,
+                             const std::string& style_id, const std::string& style_name,
                              pugi::xml_node insert_before) {
   if (rows == 0 || cols == 0) {
     throw std::invalid_argument("table rows and cols must be greater than zero");
@@ -328,8 +332,10 @@ Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_
   pugi::xml_node table = insert_before ? parent.insert_child_before("w:tbl", insert_before)
                                        : parent.append_child("w:tbl");
   pugi::xml_node properties = table.append_child("w:tblPr");
-  pugi::xml_node style = properties.append_child("w:tblStyle");
-  style.append_attribute("w:val").set_value(kTableStyleValue);
+  if (!style_id.empty()) {
+    pugi::xml_node style = properties.append_child("w:tblStyle");
+    style.append_attribute("w:val").set_value(style_id.c_str());
+  }
   properties.append_child("w:tblW").append_attribute("w:w").set_value("0");
   properties.child("w:tblW").append_attribute("w:type").set_value("auto");
 
@@ -351,7 +357,15 @@ Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_
     table_rows.emplace_back(std::move(table_cells));
   }
 
-  return Table(std::move(table_rows));
+  return Table(std::move(table_rows), style_id, style_name);
+}
+
+NamedStyleInfo resolved_table_style_for_write(const StyleCatalog& style_catalog,
+                                              std::string_view style_id_or_name) {
+  if (style_id_or_name.empty()) {
+    return style_info_from_id(style_catalog, NamedStyleType::Table, kTableStyleValue);
+  }
+  return resolve_style_reference(style_catalog, NamedStyleType::Table, style_id_or_name);
 }
 
 pugi::xml_node get_or_add_child(pugi::xml_node parent, const char* name) {
@@ -438,8 +452,19 @@ void apply_alignment(pugi::xml_node paragraph, ParagraphAlignment alignment) {
 }
 
 void apply_run_style(pugi::xml_node run, const RunStyle& style) {
-  if (!style.bold && !style.italic && !style.underline && style.font_size_pt <= 0 &&
-      style.color_hex.empty() && style.font_name.empty() && style.highlight.empty()) {
+  if (style.subscript && style.superscript) {
+    throw std::invalid_argument("run style cannot be both subscript and superscript");
+  }
+
+  const bool has_font_names = !style.font_name.empty() || !style.ascii_font_name.empty() ||
+                              !style.h_ansi_font_name.empty() ||
+                              !style.east_asia_font_name.empty() ||
+                              !style.complex_script_font_name.empty();
+  const bool has_character_style = !style.character_style_id.empty();
+  if (!style.bold && !style.italic && !style.underline && !style.strike &&
+      !style.double_strike && !style.all_caps && !style.small_caps && !style.subscript &&
+      !style.superscript && style.font_size_pt <= 0 && style.color_hex.empty() &&
+      !has_font_names && !has_character_style && style.highlight.empty()) {
     return;
   }
 
@@ -447,10 +472,31 @@ void apply_run_style(pugi::xml_node run, const RunStyle& style) {
   if (!properties) {
     properties = run.prepend_child("w:rPr");
   }
-  if (!style.font_name.empty()) {
+
+  if (has_character_style) {
+    pugi::xml_node character_style = properties.append_child("w:rStyle");
+    character_style.append_attribute("w:val").set_value(style.character_style_id.c_str());
+  }
+
+  if (has_font_names) {
+    const std::string ascii_font =
+        !style.ascii_font_name.empty() ? style.ascii_font_name : style.font_name;
+    const std::string h_ansi_font = !style.h_ansi_font_name.empty()
+                                        ? style.h_ansi_font_name
+                                        : (!style.font_name.empty() ? style.font_name : ascii_font);
     pugi::xml_node fonts = properties.append_child("w:rFonts");
-    fonts.append_attribute("w:ascii").set_value(style.font_name.c_str());
-    fonts.append_attribute("w:hAnsi").set_value(style.font_name.c_str());
+    if (!ascii_font.empty()) {
+      fonts.append_attribute("w:ascii").set_value(ascii_font.c_str());
+    }
+    if (!h_ansi_font.empty()) {
+      fonts.append_attribute("w:hAnsi").set_value(h_ansi_font.c_str());
+    }
+    if (!style.east_asia_font_name.empty()) {
+      fonts.append_attribute("w:eastAsia").set_value(style.east_asia_font_name.c_str());
+    }
+    if (!style.complex_script_font_name.empty()) {
+      fonts.append_attribute("w:cs").set_value(style.complex_script_font_name.c_str());
+    }
   }
   if (style.bold) {
     properties.append_child("w:b");
@@ -461,6 +507,23 @@ void apply_run_style(pugi::xml_node run, const RunStyle& style) {
   if (style.underline) {
     pugi::xml_node underline = properties.append_child("w:u");
     underline.append_attribute("w:val").set_value("single");
+  }
+  if (style.strike) {
+    properties.append_child("w:strike");
+  }
+  if (style.double_strike) {
+    properties.append_child("w:dstrike");
+  }
+  if (style.all_caps) {
+    properties.append_child("w:caps");
+  }
+  if (style.small_caps) {
+    properties.append_child("w:smallCaps");
+  }
+  if (style.subscript || style.superscript) {
+    pugi::xml_node vert_align = properties.append_child("w:vertAlign");
+    vert_align.append_attribute("w:val")
+        .set_value(style.subscript ? "subscript" : "superscript");
   }
   if (style.font_size_pt > 0) {
     pugi::xml_node size = properties.append_child("w:sz");
@@ -512,7 +575,7 @@ void append_run_text(pugi::xml_node run, const std::string& text) {
   }
 }
 
-Table table_from_xml(const pugi::xml_node& table_node) {
+Table table_from_xml(const pugi::xml_node& table_node, const StyleCatalog* style_catalog) {
   std::vector<TableRow> rows;
   for (const pugi::xml_node& row_node : table_node.children("w:tr")) {
     std::vector<TableCell> cells;
@@ -521,7 +584,7 @@ Table table_from_xml(const pugi::xml_node& table_node) {
       std::vector<Table> nested_tables;
       for (const pugi::xml_node& child : cell_node.children()) {
         if (std::string_view(child.name()) == "w:tbl") {
-          nested_tables.push_back(table_from_xml(child));
+          nested_tables.push_back(table_from_xml(child, style_catalog));
           continue;
         }
         if (std::string_view(child.name()) != "w:p") {
@@ -548,7 +611,15 @@ Table table_from_xml(const pugi::xml_node& table_node) {
     }
     rows.emplace_back(std::move(cells));
   }
-  return Table(std::move(rows));
+  std::string style_id;
+  if (const pugi::xml_node tbl_pr = child_named(table_node, "w:tblPr")) {
+    style_id = child_named(tbl_pr, "w:tblStyle").attribute("w:val").value();
+  }
+  std::string style_name;
+  if (style_catalog != nullptr && !style_id.empty()) {
+    style_name = style_info_from_id(*style_catalog, NamedStyleType::Table, style_id).name;
+  }
+  return Table(std::move(rows), style_id, style_name);
 }
 
 enum class ParagraphBindingKind {
@@ -557,10 +628,12 @@ enum class ParagraphBindingKind {
 };
 
 std::shared_ptr<ParagraphBinding> bind_body_paragraph(pugi::xml_document& xml, bool& dirty,
-                                                      std::size_t paragraph_index) {
+                                                      std::size_t paragraph_index,
+                                                      const std::shared_ptr<StyleCatalog>& style_catalog) {
   auto binding = std::make_shared<ParagraphBinding>();
   binding->xml = &xml;
   binding->dirty = &dirty;
+  binding->style_catalog = style_catalog;
   binding->kind = static_cast<int>(ParagraphBindingKind::Body);
   binding->paragraph_index = paragraph_index;
   return binding;
@@ -570,10 +643,12 @@ std::shared_ptr<ParagraphBinding> bind_table_cell_paragraph(pugi::xml_document& 
                                                             std::size_t table_index,
                                                             std::size_t row_index,
                                                             std::size_t col_index,
-                                                            std::size_t cell_paragraph_index) {
+                                                            std::size_t cell_paragraph_index,
+                                                            const std::shared_ptr<StyleCatalog>& style_catalog) {
   auto binding = std::make_shared<ParagraphBinding>();
   binding->xml = &xml;
   binding->dirty = &dirty;
+  binding->style_catalog = style_catalog;
   binding->kind = static_cast<int>(ParagraphBindingKind::TableCell);
   binding->table_index = table_index;
   binding->row_index = row_index;
@@ -736,21 +811,64 @@ pugi::xml_node paragraph_node_for_model_binding(const ParagraphBinding& binding)
   return paragraph_node_from_binding(binding);
 }
 
-void apply_run_style_for_model(pugi::xml_node run, const RunStyle& style) {
-  apply_run_style(run, style);
+void insert_paragraph_before_binding(ParagraphBinding& binding, const std::vector<Run>& runs,
+                                     ParagraphAlignment alignment, Paragraph& paragraph) {
+  if (binding.xml == nullptr) {
+    throw std::logic_error("paragraph is not bound to a writable document");
+  }
+
+  pugi::xml_node current = paragraph_node_from_binding(binding);
+  if (!current) {
+    throw std::out_of_range("bound paragraph no longer exists");
+  }
+
+  pugi::xml_node parent = current.parent();
+  pugi::xml_node inserted = parent.insert_child_before("w:p", current);
+  apply_alignment(inserted, alignment);
+  set_paragraph_runs_in_xml(inserted, runs);
+
+  if (binding.kind == static_cast<int>(ParagraphBindingKind::Body)) {
+    ++binding.paragraph_index;
+  } else {
+    ++binding.cell_paragraph_index;
+  }
+  if (binding.dirty != nullptr) {
+    *binding.dirty = true;
+  }
+
+  Paragraph result = paragraph_from_runs(runs, alignment);
+  ParagraphBinding inserted_binding = binding;
+  if (inserted_binding.kind == static_cast<int>(ParagraphBindingKind::Body)) {
+    inserted_binding.paragraph_index -= 1;
+  } else {
+    inserted_binding.cell_paragraph_index -= 1;
+  }
+  paragraph = Paragraph(result.text(), result.alignment(), result.first_run_style(),
+                        result.has_page_break(), result.runs(), result.style_id(),
+                        result.heading_level(), result.format(), {},
+                        std::make_shared<ParagraphBinding>(std::move(inserted_binding)));
+}
+
+void apply_run_style_for_model(pugi::xml_node run, const RunStyle& style,
+                               const StyleCatalog* style_catalog) {
+  apply_run_style(run, resolve_run_style_reference(style, style_catalog));
 }
 
 void append_run_text_for_model(pugi::xml_node run, const std::string& text) {
   append_run_text(run, text);
 }
 
-Document::Document() : package_(OpcPackage::from_directory(DOCXCPP_DEFAULT_TEMPLATE_DIR)) {
+Document::Document() : package_(load_default_template_package()) {
   load_document_xml();
+  style_catalog_ = std::make_shared<StyleCatalog>(load_style_catalog(package_));
 }
 
 Document::Document(const std::filesystem::path& path) : package_(OpcPackage::open(path)) {
   load_document_xml();
+  style_catalog_ = std::make_shared<StyleCatalog>(load_style_catalog(package_));
 }
+
+Document::~Document() = default;
 
 Document Document::open(const std::filesystem::path& path) { return Document(path); }
 
@@ -762,12 +880,12 @@ Paragraph Document::add_paragraph(const std::vector<Run>& runs, ParagraphAlignme
   const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   apply_alignment(paragraph, alignment);
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
   Paragraph result = paragraph_from_runs(runs, alignment);
   result = Paragraph(result.text(), result.alignment(), result.first_run_style(),
-                     result.has_page_break(), result.runs(), result.style_id(),
-                     result.heading_level(), result.format(), {}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
+                     result.has_page_break(), result.runs(), result.style_id(), result.heading_level(),
+                     result.format(), {}, bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
   return result;
 }
 
@@ -779,7 +897,7 @@ Paragraph Document::add_page_break() {
   br.append_attribute("w:type").set_value("page");
   dirty_ = true;
   return Paragraph("\n", ParagraphAlignment::Inherit, {}, true, {Run("\n", {})}, {}, -1, {}, {},
-                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_styled_paragraph(const std::string& text, const RunStyle& style,
@@ -787,10 +905,11 @@ Paragraph Document::add_styled_paragraph(const std::string& text, const RunStyle
   const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   apply_alignment(paragraph, alignment);
-  set_paragraph_text_in_xml(paragraph, text, style);
+  set_paragraph_text_in_xml(paragraph, text, style, style_catalog_.get());
   dirty_ = true;
-  return Paragraph(text, alignment, style, false, {Run(text, style)}, {}, -1, {}, {},
-                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
+  const RunStyle resolved_style = resolve_run_style_reference(style, style_catalog_.get());
+  return Paragraph(text, alignment, resolved_style, false, {Run(text, resolved_style)}, {}, -1, {}, {},
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_heading(const std::string& text, int level) {
@@ -806,12 +925,12 @@ Paragraph Document::add_heading(const std::vector<Run>& runs, int level,
   pugi::xml_node style_node = properties.append_child("w:pStyle");
   style_node.append_attribute("w:val").set_value(style_id.c_str());
   apply_alignment(paragraph, alignment);
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
   Paragraph result = paragraph_from_runs(runs, alignment, style_id, level);
   return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
                    result.runs(), style_id, level, result.format(), {},
-                   bind_body_paragraph(*xml_, dirty_, paragraph_index));
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_styled_heading(const std::string& text, int level, const RunStyle& run_style,
@@ -823,21 +942,24 @@ Paragraph Document::add_styled_heading(const std::string& text, int level, const
   pugi::xml_node style_node = properties.append_child("w:pStyle");
   style_node.append_attribute("w:val").set_value(style_id.c_str());
   apply_alignment(paragraph, alignment);
-  set_paragraph_text_in_xml(paragraph, text, run_style);
+  set_paragraph_text_in_xml(paragraph, text, run_style, style_catalog_.get());
   dirty_ = true;
-  return Paragraph(text, alignment, run_style, false, {Run(text, run_style)}, style_id, level, {},
-                   {}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
+  const RunStyle resolved_style = resolve_run_style_reference(run_style, style_catalog_.get());
+  return Paragraph(text, alignment, resolved_style, false, {Run(text, resolved_style)}, style_id,
+                   level, {}, {}, bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
 }
 
-Table Document::add_table(std::size_t rows, std::size_t cols) {
-  Table result = create_table_in_parent(document_body(*xml_), rows, cols,
-                                        child_named(document_body(*xml_), "w:sectPr"));
+Table Document::add_table(std::size_t rows, std::size_t cols, const std::string& style_id_or_name) {
+  const NamedStyleInfo style_info = resolved_table_style_for_write(*style_catalog_, style_id_or_name);
+  Table result = create_table_in_parent(document_body(*xml_), rows, cols, style_info.id,
+                                        style_info.name, child_named(document_body(*xml_), "w:sectPr"));
   dirty_ = true;
   return result;
 }
 
 Table Document::add_nested_table(std::size_t table_index, std::size_t row_index, std::size_t col_index,
-                                 std::size_t rows, std::size_t cols) {
+                                 std::size_t rows, std::size_t cols,
+                                 const std::string& style_id_or_name) {
   pugi::xml_node table = require_table_node(*xml_, table_index);
   pugi::xml_node row = require_row_node(table, row_index);
   pugi::xml_node cell = require_cell_node(row, col_index);
@@ -856,13 +978,40 @@ Table Document::add_nested_table(std::size_t table_index, std::size_t row_index,
     }
   }
 
-  Table result = create_table_in_parent(cell, rows, cols, trailing_paragraph);
+  const NamedStyleInfo style_info = resolved_table_style_for_write(*style_catalog_, style_id_or_name);
+  Table result = create_table_in_parent(cell, rows, cols, style_info.id, style_info.name,
+                                        trailing_paragraph);
   if (!trailing_paragraph) {
     pugi::xml_node paragraph = cell.append_child("w:p");
     set_paragraph_text_in_xml(paragraph, "");
   }
   dirty_ = true;
   return result;
+}
+
+void Document::set_table_style(std::size_t table_index, const std::string& style_id_or_name) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node tbl_pr = get_or_add_child(table, "w:tblPr");
+  pugi::xml_node tbl_style = child_named(tbl_pr, "w:tblStyle");
+  if (style_id_or_name.empty()) {
+    if (tbl_style) {
+      tbl_pr.remove_child(tbl_style);
+    }
+    dirty_ = true;
+    return;
+  }
+
+  const NamedStyleInfo style_info = resolve_style_reference(*style_catalog_, NamedStyleType::Table,
+                                                            style_id_or_name);
+  if (!tbl_style) {
+    tbl_style = tbl_pr.prepend_child("w:tblStyle");
+  }
+  if (tbl_style.attribute("w:val")) {
+    tbl_style.attribute("w:val").set_value(style_info.id.c_str());
+  } else {
+    tbl_style.append_attribute("w:val").set_value(style_info.id.c_str());
+  }
+  dirty_ = true;
 }
 
 void Document::add_table_row(std::size_t table_index) {
@@ -918,7 +1067,7 @@ void Document::set_table_cell(std::size_t table_index, std::size_t row_index, st
   if (!paragraph) {
     paragraph = cell.append_child("w:p");
   }
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
 }
 
@@ -956,7 +1105,7 @@ void Document::set_nested_table_cell(std::size_t table_index, std::size_t row_in
   if (!paragraph) {
     paragraph = nested_cell.append_child("w:p");
   }
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
 }
 
@@ -971,7 +1120,7 @@ Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_
   dirty_ = true;
   return Paragraph(text, ParagraphAlignment::Inherit, {}, false, {Run(text, {})}, {}, -1, {}, {},
                    bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
-                                             cell_paragraph_index));
+                                             cell_paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_t row_index,
@@ -982,13 +1131,13 @@ Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_
   pugi::xml_node cell = require_cell_node(row, col_index);
   const std::size_t cell_paragraph_index = paragraph_index_in_cell(cell);
   pugi::xml_node paragraph = cell.append_child("w:p");
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
   Paragraph result = paragraph_from_runs(runs, ParagraphAlignment::Inherit);
   return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
                    result.runs(), result.style_id(), result.heading_level(), result.format(), {},
                    bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
-                                             cell_paragraph_index));
+                                             cell_paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_nested_table_cell_paragraph(std::size_t table_index, std::size_t row_index,
@@ -1023,7 +1172,7 @@ Paragraph Document::add_nested_table_cell_paragraph(std::size_t table_index, std
   pugi::xml_node nested_row = require_row_node(nested_table, nested_row_index);
   pugi::xml_node nested_cell = require_cell_node(nested_row, nested_col_index);
   pugi::xml_node paragraph = nested_cell.append_child("w:p");
-  set_paragraph_runs_in_xml(paragraph, runs);
+  set_paragraph_runs_in_xml(paragraph, runs, style_catalog_.get());
   dirty_ = true;
   Paragraph result = paragraph_from_runs(runs, ParagraphAlignment::Inherit);
   return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
@@ -1083,12 +1232,16 @@ void Document::merge_table_cells(std::size_t table_index, std::size_t start_row,
   dirty_ = true;
 }
 
-void Document::set_page_size_pt(int width_pt, int height_pt) {
-  if (width_pt <= 0 || height_pt <= 0) {
+void Document::set_page_size(const PageSize& page_size) {
+  if (page_size.width.twips() <= 0 || page_size.height.twips() <= 0) {
     throw std::invalid_argument("page size must be greater than zero");
   }
-  set_page_size_pt_in_xml(*xml_, width_pt, height_pt);
+  set_page_size_in_xml(*xml_, page_size);
   dirty_ = true;
+}
+
+void Document::set_page_size(StandardPageSize standard_size) {
+  set_page_size(standard_page_size(standard_size));
 }
 
 void Document::set_page_orientation(PageOrientation orientation) {
@@ -1096,27 +1249,29 @@ void Document::set_page_orientation(PageOrientation orientation) {
   dirty_ = true;
 }
 
-void Document::set_page_margins_pt(const PageMargins& margins) {
-  if (margins.top_pt < 0 || margins.right_pt < 0 || margins.bottom_pt < 0 || margins.left_pt < 0 ||
-      margins.header_pt < 0 || margins.footer_pt < 0 || margins.gutter_pt < 0) {
+void Document::set_page_margins(const PageMargins& margins) {
+  if (margins.top.twips() < 0 || margins.right.twips() < 0 || margins.bottom.twips() < 0 ||
+      margins.left.twips() < 0 || margins.header.twips() < 0 || margins.footer.twips() < 0 ||
+      margins.gutter.twips() < 0) {
     throw std::invalid_argument("page margins cannot be negative");
   }
-  set_page_margins_pt_in_xml(*xml_, margins);
+  set_page_margins_in_xml(*xml_, margins);
   dirty_ = true;
 }
 
 void Document::add_section_break() {
-  add_section_break(Section(page_size_pt(), page_orientation(), page_margins_pt()));
+  add_section_break(Section(page_size(), page_orientation(), page_margins()));
 }
 
 void Document::add_section_break(const Section& next_section) {
-  const PageSize& size = next_section.page_size_pt();
-  const PageMargins& margins = next_section.page_margins_pt();
-  if (size.width_pt <= 0 || size.height_pt <= 0) {
+  const PageSize& size = next_section.page_size();
+  const PageMargins& margins = next_section.page_margins();
+  if (size.width.twips() <= 0 || size.height.twips() <= 0) {
     throw std::invalid_argument("section page size must be greater than zero");
   }
-  if (margins.top_pt < 0 || margins.right_pt < 0 || margins.bottom_pt < 0 || margins.left_pt < 0 ||
-      margins.header_pt < 0 || margins.footer_pt < 0 || margins.gutter_pt < 0) {
+  if (margins.top.twips() < 0 || margins.right.twips() < 0 || margins.bottom.twips() < 0 ||
+      margins.left.twips() < 0 || margins.header.twips() < 0 || margins.footer.twips() < 0 ||
+      margins.gutter.twips() < 0) {
     throw std::invalid_argument("section page margins cannot be negative");
   }
 
@@ -1124,19 +1279,13 @@ void Document::add_section_break(const Section& next_section) {
   pugi::xml_node body_sect_pr = child_named(body, "w:sectPr");
   if (!body_sect_pr) {
     body_sect_pr = body.append_child("w:sectPr");
-    set_section_properties_in_xml(body_sect_pr,
-                                  Section(page_size_pt(), page_orientation(), page_margins_pt()));
+    set_section_properties_in_xml(body_sect_pr, Section(page_size(), page_orientation(), page_margins()));
   }
 
   pugi::xml_node paragraph = body.insert_child_before("w:p", body_sect_pr);
   pugi::xml_node p_pr = paragraph.append_child("w:pPr");
   p_pr.append_copy(body_sect_pr);
   set_section_properties_in_xml(body_sect_pr, next_section);
-  dirty_ = true;
-}
-
-void Document::set_even_and_odd_headers(bool enabled) {
-  set_even_and_odd_headers_in_settings(package_, enabled);
   dirty_ = true;
 }
 
@@ -1149,6 +1298,11 @@ void Document::set_section_different_first_page(std::size_t section_index, bool 
 
 bool Document::section_different_first_page(std::size_t section_index) const {
   return read_section_different_first_page_from_xml(*xml_, section_index);
+}
+
+void Document::set_even_and_odd_headers(bool enabled) {
+  set_even_and_odd_headers_in_settings(package_, enabled);
+  dirty_ = true;
 }
 
 void Document::clear_header(std::size_t section_index) {
@@ -1319,10 +1473,12 @@ Paragraph Document::add_hyperlink(const std::string& text, const std::string& ur
   const std::size_t paragraph_index = body_paragraph_count(*xml_);
   pugi::xml_node paragraph = append_block_before_section(document_body(*xml_), "w:p");
   apply_alignment(paragraph, alignment);
-  append_external_hyperlink(paragraph, rel_id, text, style);
+  append_external_hyperlink(paragraph, rel_id, text, style, style_catalog_.get());
   dirty_ = true;
-  return Paragraph(text, alignment, style, false, {Run(text, style)}, {}, -1, {},
-                   {HyperlinkInfo{text, url}}, bind_body_paragraph(*xml_, dirty_, paragraph_index));
+  const RunStyle resolved_style = resolve_run_style_reference(style, style_catalog_.get());
+  return Paragraph(text, alignment, resolved_style, false, {Run(text, resolved_style)}, {}, -1, {},
+                   {HyperlinkInfo{text, url}},
+                   bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
 }
 
 Paragraph Document::add_hyperlink_to_table_cell(std::size_t table_index, std::size_t row_index,
@@ -1335,12 +1491,14 @@ Paragraph Document::add_hyperlink_to_table_cell(std::size_t table_index, std::si
   pugi::xml_node cell = require_cell_node(row, col_index);
   const std::size_t cell_paragraph_index = paragraph_index_in_cell(cell);
   pugi::xml_node paragraph = cell.append_child("w:p");
-  append_external_hyperlink(paragraph, rel_id, text, style);
+  append_external_hyperlink(paragraph, rel_id, text, style, style_catalog_.get());
   dirty_ = true;
-  return Paragraph(text, ParagraphAlignment::Inherit, style, false, {Run(text, style)}, {}, -1,
+  const RunStyle resolved_style = resolve_run_style_reference(style, style_catalog_.get());
+  return Paragraph(text, ParagraphAlignment::Inherit, resolved_style, false,
+                   {Run(text, resolved_style)}, {}, -1,
                    {}, {HyperlinkInfo{text, url}},
                    bind_table_cell_paragraph(*xml_, dirty_, table_index, row_index, col_index,
-                                             cell_paragraph_index));
+                                             cell_paragraph_index, style_catalog_));
 }
 
 std::size_t Document::add_comment(std::size_t paragraph_index, const std::string& text,
@@ -1359,6 +1517,7 @@ std::size_t Document::add_comment(std::size_t paragraph_index, const std::string
 std::vector<Paragraph> Document::paragraphs() const {
   std::vector<Paragraph> result;
   const RelTargetMap hyperlink_targets = hyperlink_relationship_targets(package_);
+  const StyleCatalog catalog = load_style_catalog(package_);
   std::size_t paragraph_index = 0;
   for (const pugi::xml_node& child : document_body(*xml_).children()) {
     if (std::string_view(child.name()) != "w:p") {
@@ -1367,11 +1526,12 @@ std::vector<Paragraph> Document::paragraphs() const {
     std::string text;
     const std::string style_id = read_paragraph_style_id_from_xml(child);
     collect_text(child, text);
-    result.emplace_back(text, paragraph_alignment_from_xml(child), read_first_run_style_from_xml(child),
-                        paragraph_has_page_break(child), read_runs_from_xml(child), style_id,
+    result.emplace_back(text, paragraph_alignment_from_xml(child),
+                        read_first_run_style_from_xml(child, &catalog),
+                        paragraph_has_page_break(child), read_runs_from_xml(child, &catalog), style_id,
                         read_heading_level_from_style_id(style_id), read_paragraph_format_from_xml(child),
                         hyperlinks_from_xml(child, hyperlink_targets),
-                        bind_body_paragraph(*xml_, dirty_, paragraph_index));
+                        bind_body_paragraph(*xml_, dirty_, paragraph_index, style_catalog_));
     ++paragraph_index;
   }
   return result;
@@ -1379,11 +1539,12 @@ std::vector<Paragraph> Document::paragraphs() const {
 
 std::vector<Table> Document::tables() const {
   std::vector<Table> result;
+  const StyleCatalog catalog = load_style_catalog(package_);
   for (const pugi::xml_node& child : document_body(*xml_).children()) {
     if (std::string_view(child.name()) != "w:tbl") {
       continue;
     }
-    result.push_back(table_from_xml(child));
+    result.push_back(table_from_xml(child, &catalog));
   }
   return result;
 }
@@ -1392,16 +1553,16 @@ std::vector<Section> Document::sections() const {
   return read_sections_from_xml(*xml_);
 }
 
-PageSize Document::page_size_pt() const {
-  return read_page_size_pt_from_xml(*xml_);
+PageSize Document::page_size() const {
+  return read_page_size_from_xml(*xml_);
 }
 
 PageOrientation Document::page_orientation() const {
   return read_page_orientation_from_xml(*xml_);
 }
 
-PageMargins Document::page_margins_pt() const {
-  return read_page_margins_pt_from_xml(*xml_);
+PageMargins Document::page_margins() const {
+  return read_page_margins_from_xml(*xml_);
 }
 
 std::vector<CommentInfo> Document::comments() const {
@@ -1494,7 +1655,10 @@ void Document::save(const std::filesystem::path& path) {
   package_.save(path);
 }
 
-Document::Document(OpcPackage package) : package_(std::move(package)) { load_document_xml(); }
+Document::Document(OpcPackage package) : package_(std::move(package)) {
+  load_document_xml();
+  style_catalog_ = std::make_shared<StyleCatalog>(load_style_catalog(package_));
+}
 
 void Document::load_document_xml() {
   const std::vector<std::uint8_t>& bytes = package_.entry(kDocumentEntry);

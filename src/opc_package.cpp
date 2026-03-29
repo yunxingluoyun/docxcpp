@@ -48,12 +48,15 @@ std::string normalize_entry_name(const std::filesystem::path& root,
 }  // namespace
 
 OpcPackage OpcPackage::open(const std::filesystem::path& path) {
-  OpcPackage package;
   const std::vector<std::uint8_t> archive_bytes = read_file(path);
+  return from_archive_bytes(archive_bytes);
+}
 
+OpcPackage OpcPackage::from_archive_bytes(const std::vector<std::uint8_t>& archive_bytes) {
+  OpcPackage package;
   mz_zip_archive archive{};
   if (!mz_zip_reader_init_mem(&archive, archive_bytes.data(), archive_bytes.size(), 0)) {
-    throw std::runtime_error("failed to open zip archive: " + path.string());
+    throw std::runtime_error("failed to open zip archive from memory");
   }
 
   const mz_uint file_count = mz_zip_reader_get_num_files(&archive);
@@ -61,7 +64,7 @@ OpcPackage OpcPackage::open(const std::filesystem::path& path) {
     mz_zip_archive_file_stat stat{};
     if (!mz_zip_reader_file_stat(&archive, index, &stat)) {
       mz_zip_reader_end(&archive);
-      throw std::runtime_error("failed to stat zip entry in: " + path.string());
+      throw std::runtime_error("failed to stat zip entry from memory archive");
     }
     if (mz_zip_reader_is_file_a_directory(&archive, index)) {
       continue;

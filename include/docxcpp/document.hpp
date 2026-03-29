@@ -7,14 +7,19 @@
 #include <string>
 #include <vector>
 
-#include "pugixml.hpp"
-
+#include "docxcpp/export.hpp"
 #include "docxcpp/opc_package.hpp"
 #include "docxcpp/paragraph.hpp"
 #include "docxcpp/section.hpp"
 #include "docxcpp/table.hpp"
 
+namespace pugi {
+class xml_document;
+}
+
 namespace docxcpp {
+
+struct StyleCatalog;
 
 /**
  * @brief 图片尺寸，单位为 pt。
@@ -48,7 +53,7 @@ struct CommentInfo {
   std::string initials;
 };
 
-class Document {
+class DOCXCPP_API Document {
 public:
   /**
    * @brief 创建一个基于默认模板的空文档。
@@ -59,6 +64,11 @@ public:
    * @param path docx 文件路径。
    */
   explicit Document(const std::filesystem::path& path);
+  ~Document();
+  Document(Document&&) noexcept = default;
+  Document& operator=(Document&&) noexcept = default;
+  Document(const Document&) = delete;
+  Document& operator=(const Document&) = delete;
 
   /**
    * @brief 以静态工厂形式打开文档。
@@ -127,7 +137,7 @@ public:
    * @param cols 列数。
    * @return 新增表格。
    */
-  Table add_table(std::size_t rows, std::size_t cols);
+  Table add_table(std::size_t rows, std::size_t cols, const std::string& style_id_or_name = {});
   /**
    * @brief 在指定单元格中追加一个嵌套表格。
    * @param table_index 顶层表格索引。
@@ -138,7 +148,14 @@ public:
    * @return 新增嵌套表格。
    */
   Table add_nested_table(std::size_t table_index, std::size_t row_index, std::size_t col_index,
-                         std::size_t rows, std::size_t cols);
+                         std::size_t rows, std::size_t cols,
+                         const std::string& style_id_or_name = {});
+  /**
+   * @brief 设置顶层表格的样式。
+   * @param table_index 表格索引。
+   * @param style_id_or_name 样式 ID 或样式名称；空字符串表示移除直接样式。
+   */
+  void set_table_style(std::size_t table_index, const std::string& style_id_or_name);
   /**
    * @brief 为顶层表格末尾追加一行。
    * @param table_index 顶层表格索引。
@@ -310,21 +327,32 @@ public:
                                 std::optional<bool> keep_with_next,
                                 std::optional<bool> page_break_before);
   /**
-   * @brief 设置当前节页面尺寸，单位为 pt。
-   * @param width_pt 页面宽度。
-   * @param height_pt 页面高度。
+   * @brief 设置段落的 widow/orphan control 标记。
+   * @param paragraph_index 段落索引。
+   * @param widow_control 是否启用 widow/orphan control；nullopt 表示移除显式设置。
    */
-  void set_page_size_pt(int width_pt, int height_pt);
+  void set_paragraph_widow_control(std::size_t paragraph_index,
+                                   std::optional<bool> widow_control);
+  /**
+   * @brief 设置当前节页面尺寸，支持任意长度单位。
+   * @param page_size 页面尺寸。
+   */
+  void set_page_size(const PageSize& page_size);
+  /**
+   * @brief 设置当前节页面尺寸为标准纸张预设。
+   * @param standard_size 标准纸张预设。
+   */
+  void set_page_size(StandardPageSize standard_size);
   /**
    * @brief 设置当前节页面方向。
    * @param orientation 页面方向。
    */
   void set_page_orientation(PageOrientation orientation);
   /**
-   * @brief 设置当前节页边距与页眉页脚距离。
+   * @brief 设置当前节页边距与页眉页脚距离，支持任意长度单位。
    * @param margins 页边距配置。
    */
-  void set_page_margins_pt(const PageMargins& margins);
+  void set_page_margins(const PageMargins& margins);
   /**
    * @brief 在文档末尾插入一个 section break，并继承当前节设置。
    */
@@ -578,7 +606,7 @@ public:
    * @brief 返回最后一个 section 的页面尺寸。
    * @return 页面尺寸。
    */
-  PageSize page_size_pt() const;
+  PageSize page_size() const;
   /**
    * @brief 返回最后一个 section 的页面方向。
    * @return 页面方向。
@@ -588,7 +616,7 @@ public:
    * @brief 返回最后一个 section 的页边距配置。
    * @return 页边距配置。
    */
-  PageMargins page_margins_pt() const;
+  PageMargins page_margins() const;
   /**
    * @brief 返回文档中所有批注。
    * @return 批注列表。
@@ -656,6 +684,7 @@ private:
 
   OpcPackage package_;
   std::unique_ptr<pugi::xml_document> xml_;
+  std::shared_ptr<StyleCatalog> style_catalog_;
   mutable bool dirty_{false};
 };
 

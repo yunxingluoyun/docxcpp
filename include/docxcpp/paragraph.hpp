@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "docxcpp/export.hpp"
+
 namespace docxcpp {
 
 /**
@@ -25,9 +27,21 @@ struct RunStyle {
   bool bold{false};
   bool italic{false};
   bool underline{false};
+  bool strike{false};
+  bool double_strike{false};
+  bool all_caps{false};
+  bool small_caps{false};
+  bool subscript{false};
+  bool superscript{false};
   int font_size_pt{0};
   std::string color_hex;
   std::string font_name;
+  std::string ascii_font_name;
+  std::string h_ansi_font_name;
+  std::string east_asia_font_name;
+  std::string complex_script_font_name;
+  std::string character_style_id;
+  std::string character_style_name;
   std::string highlight;
 };
 
@@ -88,6 +102,7 @@ struct ParagraphFormat {
   std::optional<bool> keep_together;
   std::optional<bool> keep_with_next;
   std::optional<bool> page_break_before;
+  std::optional<bool> widow_control;
 };
 
 /**
@@ -100,7 +115,7 @@ struct HyperlinkInfo {
 
 struct ParagraphBinding;
 
-class Run {
+class DOCXCPP_API Run {
 public:
   /**
    * @brief 构造一个文本 run。
@@ -125,7 +140,7 @@ private:
   RunStyle style_;
 };
 
-class Paragraph {
+class DOCXCPP_API Paragraph {
 public:
   /**
    * @brief 构造一个段落对象。
@@ -198,6 +213,22 @@ public:
    * @return 新增的 run 对象快照。
    */
   Run add_run(const std::string& text, const RunStyle& style = {});
+  /**
+   * @brief 在当前段落前插入一个纯文本段落，并同步写回文档。
+   * @param text 段落文本。
+   * @param alignment 对齐方式。
+   * @return 新增段落对象快照。
+   */
+  Paragraph insert_paragraph_before(const std::string& text,
+                                    ParagraphAlignment alignment = ParagraphAlignment::Inherit);
+  /**
+   * @brief 在当前段落前插入一个由多个 runs 组成的段落，并同步写回文档。
+   * @param runs 段落 runs。
+   * @param alignment 对齐方式。
+   * @return 新增段落对象快照。
+   */
+  Paragraph insert_paragraph_before(const std::vector<Run>& runs,
+                                    ParagraphAlignment alignment = ParagraphAlignment::Inherit);
 
 private:
   std::string text_;

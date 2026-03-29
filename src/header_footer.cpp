@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "internal/paragraph_support.hpp"
+#include "internal/style_support.hpp"
 
 namespace docxcpp {
 
@@ -450,7 +451,8 @@ Paragraph append_part_runs_local(OpcPackage& package, const std::string& entry_n
   }
   pugi::xml_node paragraph = root.append_child("w:p");
   apply_alignment_local(paragraph, alignment);
-  set_paragraph_runs_in_xml(paragraph, runs);
+  const StyleCatalog catalog = load_style_catalog(package);
+  set_paragraph_runs_in_xml(paragraph, runs, &catalog);
   package.set_entry(entry_name, xml_to_bytes_local(xml));
   Paragraph result = paragraph_from_runs(runs, alignment);
   return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
@@ -716,14 +718,15 @@ std::vector<Paragraph> read_header_paragraphs(const OpcPackage& package,
     return {};
   }
   pugi::xml_document part_xml = parse_package_xml_local(package, ("word/" + target).c_str());
+  const StyleCatalog catalog = load_style_catalog(package);
   std::vector<Paragraph> result;
   for (const pugi::xml_node& paragraph : part_xml.document_element().children("w:p")) {
     const std::string style_id = read_paragraph_style_id_from_xml(paragraph);
     std::string text;
     collect_text_from_node_local(paragraph, text);
-    const auto runs = read_runs_from_xml(paragraph);
+    const auto runs = read_runs_from_xml(paragraph, &catalog);
     result.emplace_back(text, paragraph_alignment_from_xml_local(paragraph),
-                        read_first_run_style_from_xml(paragraph), false, runs, style_id,
+                        read_first_run_style_from_xml(paragraph, &catalog), false, runs, style_id,
                         read_heading_level_from_style_id(style_id),
                         read_paragraph_format_from_xml(paragraph), std::vector<HyperlinkInfo>{}, nullptr);
   }
@@ -759,14 +762,15 @@ std::vector<Paragraph> read_footer_paragraphs(const OpcPackage& package,
     return {};
   }
   pugi::xml_document part_xml = parse_package_xml_local(package, ("word/" + target).c_str());
+  const StyleCatalog catalog = load_style_catalog(package);
   std::vector<Paragraph> result;
   for (const pugi::xml_node& paragraph : part_xml.document_element().children("w:p")) {
     const std::string style_id = read_paragraph_style_id_from_xml(paragraph);
     std::string text;
     collect_text_from_node_local(paragraph, text);
-    const auto runs = read_runs_from_xml(paragraph);
+    const auto runs = read_runs_from_xml(paragraph, &catalog);
     result.emplace_back(text, paragraph_alignment_from_xml_local(paragraph),
-                        read_first_run_style_from_xml(paragraph), false, runs, style_id,
+                        read_first_run_style_from_xml(paragraph, &catalog), false, runs, style_id,
                         read_heading_level_from_style_id(style_id),
                         read_paragraph_format_from_xml(paragraph), std::vector<HyperlinkInfo>{}, nullptr);
   }

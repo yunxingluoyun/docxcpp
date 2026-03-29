@@ -6,13 +6,16 @@
 #include <unordered_map>
 #include <vector>
 
+#include "docxcpp/export.hpp"
+
 namespace docxcpp {
 
-class OpcPackage {
+class DOCXCPP_API OpcPackage {
 public:
   using EntryMap = std::unordered_map<std::string, std::vector<std::uint8_t>>;
 
   static OpcPackage open(const std::filesystem::path& path);
+  static OpcPackage from_archive_bytes(const std::vector<std::uint8_t>& archive_bytes);
   static OpcPackage from_directory(const std::filesystem::path& directory);
 
   const std::vector<std::uint8_t>& entry(const std::string& name) const;

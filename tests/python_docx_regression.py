@@ -48,7 +48,7 @@ def validate_all_features(path: Path) -> None:
     require(path.exists(), f"missing docx: {path}")
     doc = Document(path)
 
-    require(len(doc.paragraphs) == 10, "all-features paragraphs mismatch")
+    require(len(doc.paragraphs) == 11, "all-features paragraphs mismatch")
     require(len(doc.tables) == 1, "all-features tables mismatch")
     require(len(doc.inline_shapes) == 2, "all-features images mismatch")
     require(len(doc.sections) == 2, "all-features sections mismatch")
@@ -56,7 +56,25 @@ def validate_all_features(path: Path) -> None:
 
     require(doc.paragraphs[0].text == "Document Title", "all-features title mismatch")
     require(doc.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER, "all-features title align")
-    require(doc.paragraphs[4].hyperlinks[0].url == "https://openai.com", "all-features hyperlink url")
+    require(doc.paragraphs[0].runs[0].style.name == "Emphasis", "all-features title character style")
+    require(doc.paragraphs[0].runs[0].font.all_caps, "all-features title all caps")
+    require(doc.paragraphs[5].hyperlinks[0].url == "https://openai.com", "all-features hyperlink url")
+
+    preface = doc.paragraphs[1]
+    require(preface.text == "preface note", "all-features inserted paragraph text mismatch")
+    require(preface.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY, "all-features inserted paragraph align")
+    require(preface.runs[0].bold, "all-features inserted paragraph run0 bold")
+    require(preface.runs[0].style.name == "Strong", "all-features inserted paragraph run0 style")
+    require(preface.runs[0].font.strike, "all-features inserted paragraph run0 strike")
+    require(preface.runs[1].font.name == "Times New Roman", "all-features inserted paragraph run1 font")
+    require(preface.runs[1].font.small_caps, "all-features inserted paragraph run1 small caps")
+    require(preface.runs[2].font.superscript, "all-features inserted paragraph run2 superscript")
+    require(preface.runs[2].text == " note", "all-features inserted paragraph run2 text")
+
+    alpha = doc.paragraphs[2]
+    require(alpha.text == "alpha body", "all-features alpha paragraph mismatch")
+    require(round(alpha.paragraph_format.left_indent.pt) == 24, "all-features alpha left indent")
+    require(alpha.paragraph_format.widow_control is False, "all-features widow control mismatch")
 
     comment = comment_list(doc)[0]
     require(comment.text == "alpha note", "all-features comment text mismatch")
@@ -99,8 +117,15 @@ def validate_all_features(path: Path) -> None:
             "all-features section1 footer paragraphs")
     require([p.text for p in section1.even_page_footer.paragraphs] == ["Even Footer"],
             "all-features section1 even footer paragraphs")
+    require(section1.footer.paragraphs[1].runs[0].italic, "all-features styled footer italic")
+    require(section1.footer.paragraphs[1].runs[0].font.double_strike,
+            "all-features styled footer double strike")
+    require(str(section1.footer.paragraphs[1].runs[0].font.color.rgb) == "AA44AA",
+            "all-features styled footer color")
+    require(doc.paragraphs[8].runs[0].font.subscript, "all-features aside subscript")
 
     table = doc.tables[0]
+    require(table.style.name == "Medium Grid 1 Accent 1", "all-features table style mismatch")
     require(len(table.rows) == 3, "all-features table row count mismatch")
     require(len(table.rows[0].cells) == 4, "all-features logical col count mismatch")
     require(table.cell(0, 0).text == "r1c1\nmerged alias paragraph", "all-features merged cell text")
@@ -113,6 +138,11 @@ def validate_all_features(path: Path) -> None:
     require(len(nested.rows) == 1, "all-features nested row count")
     require(nested.cell(0, 0).text == "nested-a", "all-features nested cell 00")
     require(nested.cell(0, 1).text == "nested-b", "all-features nested cell 01")
+
+    with zipfile.ZipFile(path) as archive:
+        document_xml_text = archive.read("word/document.xml").decode("utf-8")
+    require("w:eastAsia=\"Microsoft YaHei\"" in document_xml_text, "all-features missing eastAsia font slot")
+    require("w:cs=\"Amiri\"" in document_xml_text, "all-features missing complex script font slot")
 
 
 def validate_api_coverage(path: Path) -> None:
@@ -238,9 +268,11 @@ def validate_full_feature_example(path: Path) -> None:
             "full-feature table cell hyperlink mismatch")
 
     with zipfile.ZipFile(path) as archive:
-        document_xml = ET.fromstring(archive.read("word/document.xml"))
+        document_xml_bytes = archive.read("word/document.xml")
+        document_xml = ET.fromstring(document_xml_bytes)
         rels_xml = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
         comments_xml = ET.fromstring(archive.read("word/comments.xml"))
+    document_xml_text = document_xml_bytes.decode("utf-8")
 
     explicit_breaks = document_xml.findall(".//w:br[@w:type='page']", NS)
     page_break_before = document_xml.findall(".//w:pageBreakBefore", NS)

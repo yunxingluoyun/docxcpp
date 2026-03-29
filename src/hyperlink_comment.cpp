@@ -1,4 +1,5 @@
 #include "internal/hyperlink_comment_support.hpp"
+#include "internal/style_support.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -261,20 +262,22 @@ std::string register_external_hyperlink_relationship(OpcPackage& package, const 
 }
 
 void append_external_hyperlink(pugi::xml_node paragraph, const std::string& rel_id,
-                               const std::string& text, const RunStyle& style) {
+                               const std::string& text, const RunStyle& style,
+                               const StyleCatalog* style_catalog) {
   pugi::xml_node hyperlink = paragraph.append_child("w:hyperlink");
   hyperlink.append_attribute("r:id").set_value(rel_id.c_str());
   hyperlink.append_attribute("w:history").set_value("1");
   pugi::xml_node run = hyperlink.append_child("w:r");
+  const RunStyle resolved_style = resolve_run_style_reference(style, style_catalog);
   pugi::xml_node properties = child_named_local(run, "w:rPr");
   if (!properties) {
     properties = run.prepend_child("w:rPr");
   }
-  if (!child_named_local(properties, "w:rStyle")) {
+  if (resolved_style.character_style_id.empty() && !child_named_local(properties, "w:rStyle")) {
     pugi::xml_node style_node = properties.append_child("w:rStyle");
     style_node.append_attribute("w:val").set_value("Hyperlink");
   }
-  apply_run_style_for_model(run, style);
+  apply_run_style_for_model(run, resolved_style, style_catalog);
   append_run_text_for_model(run, text);
 }
 

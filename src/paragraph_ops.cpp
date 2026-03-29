@@ -1,4 +1,5 @@
 #include "internal/paragraph_support.hpp"
+#include "internal/style_support.hpp"
 
 #include <optional>
 #include <stdexcept>
@@ -112,16 +113,36 @@ std::optional<bool> on_off_property_from_xml_local(const pugi::xml_node& parent,
   return true;
 }
 
-RunStyle run_style_from_xml_local(const pugi::xml_node& run) {
+bool underline_from_xml_local(const pugi::xml_node& r_pr) {
+  const pugi::xml_node underline = child_named_local(r_pr, "w:u");
+  if (!underline) {
+    return false;
+  }
+  const pugi::xml_attribute val = underline.attribute("w:val");
+  if (!val) {
+    return true;
+  }
+  const std::string_view value = val.value();
+  if (value == "0" || value == "false" || value == "off" || value == "none") {
+    return false;
+  }
+  return true;
+}
+
+RunStyle run_style_from_xml_local(const pugi::xml_node& run, const StyleCatalog* style_catalog) {
   const pugi::xml_node r_pr = child_named_local(run, "w:rPr");
   if (!r_pr) {
     return {};
   }
 
   RunStyle style;
-  style.bold = static_cast<bool>(child_named_local(r_pr, "w:b"));
-  style.italic = static_cast<bool>(child_named_local(r_pr, "w:i"));
-  style.underline = static_cast<bool>(child_named_local(r_pr, "w:u"));
+  style.bold = on_off_property_from_xml_local(r_pr, "w:b").value_or(false);
+  style.italic = on_off_property_from_xml_local(r_pr, "w:i").value_or(false);
+  style.underline = underline_from_xml_local(r_pr);
+  style.strike = on_off_property_from_xml_local(r_pr, "w:strike").value_or(false);
+  style.double_strike = on_off_property_from_xml_local(r_pr, "w:dstrike").value_or(false);
+  style.all_caps = on_off_property_from_xml_local(r_pr, "w:caps").value_or(false);
+  style.small_caps = on_off_property_from_xml_local(r_pr, "w:smallCaps").value_or(false);
   if (const pugi::xml_node size = child_named_local(r_pr, "w:sz")) {
     style.font_size_pt = size.attribute("w:val").as_int() / 2;
   }
@@ -129,13 +150,35 @@ RunStyle run_style_from_xml_local(const pugi::xml_node& run) {
     style.color_hex = color.attribute("w:val").value();
   }
   if (const pugi::xml_node fonts = child_named_local(r_pr, "w:rFonts")) {
-    style.font_name = fonts.attribute("w:ascii").value();
+    style.ascii_font_name = fonts.attribute("w:ascii").value();
+    style.h_ansi_font_name = fonts.attribute("w:hAnsi").value();
+    style.east_asia_font_name = fonts.attribute("w:eastAsia").value();
+    style.complex_script_font_name = fonts.attribute("w:cs").value();
+    style.font_name = style.ascii_font_name;
     if (style.font_name.empty()) {
-      style.font_name = fonts.attribute("w:hAnsi").value();
+      style.font_name = style.h_ansi_font_name;
+    }
+    if (style.font_name.empty()) {
+      style.font_name = style.east_asia_font_name;
+    }
+    if (style.font_name.empty()) {
+      style.font_name = style.complex_script_font_name;
     }
   }
   if (const pugi::xml_node highlight = child_named_local(r_pr, "w:highlight")) {
     style.highlight = highlight.attribute("w:val").value();
+  }
+  if (const pugi::xml_node character_style = child_named_local(r_pr, "w:rStyle")) {
+    style.character_style_id = character_style.attribute("w:val").value();
+    if (style_catalog != nullptr && !style.character_style_id.empty()) {
+      style.character_style_name =
+          style_info_from_id(*style_catalog, NamedStyleType::Character, style.character_style_id).name;
+    }
+  }
+  if (const pugi::xml_node vert_align = child_named_local(r_pr, "w:vertAlign")) {
+    const std::string_view value = vert_align.attribute("w:val").value();
+    style.subscript = value == "subscript";
+    style.superscript = value == "superscript";
   }
   return style;
 }
@@ -198,6 +241,7 @@ ParagraphFormat read_paragraph_format_from_xml(const pugi::xml_node& paragraph) 
   format.keep_together = on_off_property_from_xml_local(p_pr, "w:keepLines");
   format.keep_with_next = on_off_property_from_xml_local(p_pr, "w:keepNext");
   format.page_break_before = on_off_property_from_xml_local(p_pr, "w:pageBreakBefore");
+  format.widow_control = on_off_property_from_xml_local(p_pr, "w:widowControl");
 
   return format;
 }
@@ -231,34 +275,36 @@ int read_heading_level_from_style_id(std::string_view style_id) {
   return level;
 }
 
-RunStyle read_first_run_style_from_xml(const pugi::xml_node& paragraph) {
+RunStyle read_first_run_style_from_xml(const pugi::xml_node& paragraph,
+                                       const StyleCatalog* style_catalog) {
   for (const pugi::xml_node& child : paragraph.children()) {
     if (std::string_view(child.name()) == "w:r") {
-      return run_style_from_xml_local(child);
+      return run_style_from_xml_local(child, style_catalog);
     }
     if (std::string_view(child.name()) == "w:hyperlink") {
       for (const pugi::xml_node& run : child.children("w:r")) {
-        return run_style_from_xml_local(run);
+        return run_style_from_xml_local(run, style_catalog);
       }
     }
   }
   return {};
 }
 
-std::vector<Run> read_runs_from_xml(const pugi::xml_node& paragraph) {
+std::vector<Run> read_runs_from_xml(const pugi::xml_node& paragraph,
+                                    const StyleCatalog* style_catalog) {
   std::vector<Run> runs;
   for (const pugi::xml_node& child : paragraph.children()) {
     if (std::string_view(child.name()) == "w:r") {
       std::string text;
       collect_text_local(child, text);
-      runs.emplace_back(text, run_style_from_xml_local(child));
+      runs.emplace_back(text, run_style_from_xml_local(child, style_catalog));
       continue;
     }
     if (std::string_view(child.name()) == "w:hyperlink") {
       for (const pugi::xml_node& run : child.children("w:r")) {
         std::string text;
         collect_text_local(run, text);
-        runs.emplace_back(text, run_style_from_xml_local(run));
+        runs.emplace_back(text, run_style_from_xml_local(run, style_catalog));
       }
     }
   }
@@ -266,7 +312,7 @@ std::vector<Run> read_runs_from_xml(const pugi::xml_node& paragraph) {
 }
 
 void set_paragraph_text_in_xml(pugi::xml_node paragraph, const std::string& text,
-                               const RunStyle& style) {
+                               const RunStyle& style, const StyleCatalog* style_catalog) {
   pugi::xml_node existing_properties = child_named_local(paragraph, "w:pPr");
   pugi::xml_document preserved_properties_doc;
   if (existing_properties) {
@@ -277,11 +323,12 @@ void set_paragraph_text_in_xml(pugi::xml_node paragraph, const std::string& text
     paragraph.append_copy(preserved_properties_doc.first_child());
   }
   pugi::xml_node run = paragraph.append_child("w:r");
-  apply_run_style_for_model(run, style);
+  apply_run_style_for_model(run, style, style_catalog);
   append_run_text_for_model(run, text);
 }
 
-void set_paragraph_runs_in_xml(pugi::xml_node paragraph, const std::vector<Run>& runs) {
+void set_paragraph_runs_in_xml(pugi::xml_node paragraph, const std::vector<Run>& runs,
+                               const StyleCatalog* style_catalog) {
   pugi::xml_node existing_properties = child_named_local(paragraph, "w:pPr");
   pugi::xml_document preserved_properties_doc;
   if (existing_properties) {
@@ -300,7 +347,7 @@ void set_paragraph_runs_in_xml(pugi::xml_node paragraph, const std::vector<Run>&
 
   for (const Run& run_value : runs) {
     pugi::xml_node run = paragraph.append_child("w:r");
-    apply_run_style_for_model(run, run_value.style());
+    apply_run_style_for_model(run, run_value.style(), style_catalog);
     append_run_text_for_model(run, run_value.text());
   }
 }

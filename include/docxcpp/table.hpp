@@ -3,11 +3,13 @@
 #include <string>
 #include <vector>
 
+#include "docxcpp/export.hpp"
+
 namespace docxcpp {
 
 class Table;
 
-class TableCell {
+class DOCXCPP_API TableCell {
 public:
   /**
    * @brief 构造一个表格单元格读模型。
@@ -47,7 +49,7 @@ private:
   std::vector<Table> nested_tables_;
 };
 
-class TableRow {
+class DOCXCPP_API TableRow {
 public:
   /**
    * @brief 构造一个表格行读模型。
@@ -70,13 +72,16 @@ private:
   std::vector<TableCell> cells_;
 };
 
-class Table {
+class DOCXCPP_API Table {
 public:
   /**
    * @brief 构造一个表格读模型。
    * @param rows 表格中的物理行列表。
+   * @param style_id 直接应用的表格样式 ID。
+   * @param style_name 表格样式名称。
    */
-  explicit Table(std::vector<TableRow> rows = {});
+  explicit Table(std::vector<TableRow> rows = {}, std::string style_id = {},
+                 std::string style_name = {});
 
   /**
    * @brief 返回表格中的物理行列表。
@@ -94,6 +99,16 @@ public:
    */
   std::size_t column_count() const noexcept;
   /**
+   * @brief 返回直接应用的表格样式 ID。
+   * @return 样式 ID；未直接设置时为空字符串。
+   */
+  const std::string& style_id() const noexcept;
+  /**
+   * @brief 返回表格样式名称。
+   * @return 样式名称；未知或未直接设置时为空字符串。
+   */
+  const std::string& style_name() const noexcept;
+  /**
    * @brief 按逻辑网格坐标访问单元格。
    * @param row_index 逻辑行索引，从 0 开始。
    * @param col_index 逻辑列索引，从 0 开始。
@@ -103,6 +118,8 @@ public:
 
 private:
   std::vector<TableRow> rows_;
+  std::string style_id_;
+  std::string style_name_;
 };
 
 }  // namespace docxcpp

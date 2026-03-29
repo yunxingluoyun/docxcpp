@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -46,9 +47,11 @@ int main() {
   docxcpp::Document document;
   docxcpp::RunStyle accent_style;
   accent_style.bold = true;
+  accent_style.character_style_name = "Strong";
   accent_style.color_hex = "112233";
   docxcpp::RunStyle tail_style;
   tail_style.font_name = "Georgia";
+  tail_style.character_style_id = "Emphasis";
   std::vector<docxcpp::Run> heading_runs{
       docxcpp::Run("Heading ", accent_style),
       docxcpp::Run("Wrapper", tail_style),
@@ -74,7 +77,7 @@ int main() {
   assert(project_link.hyperlinks().size() == 1);
   assert(project_link.hyperlinks()[0].text == "Project");
   assert(project_link.hyperlinks()[0].url == "https://example.com/project");
-  document.add_table(2, 2);
+  document.add_table(2, 2, "Light Shading Accent 1");
   document.add_table_row(0);
   document.add_table_column(0);
   document.set_table_cell(0, 0, 0, "A1");
@@ -90,12 +93,13 @@ int main() {
   document.set_table_cell(0, 2, 1, "C2");
   document.add_table_cell_paragraph(0, 2, 1, "C2 second");
   document.set_table_cell(0, 2, 2, "C3");
-  document.add_nested_table(0, 2, 2, 2, 2);
+  document.add_nested_table(0, 2, 2, 2, 2, "Table Grid");
   document.set_nested_table_cell(0, 2, 2, 0, 0, 0, "N11");
   document.set_nested_table_cell(0, 2, 2, 0, 0, 1, heading_runs);
   document.add_nested_table_cell_paragraph(0, 2, 2, 0, 1, 0, "N21");
   document.set_nested_table_cell(0, 2, 2, 0, 1, 1, "N22");
   document.add_table(1, 2);
+  document.set_table_style(1, "Table Grid");
   document.set_table_cell(1, 0, 0, "MergedStart");
   document.merge_table_cells(1, 0, 0, 0, 1);
   document.add_table_cell_paragraph(1, 0, 1, "MergedAlias");
@@ -107,9 +111,9 @@ int main() {
   const auto paragraphs = reopened.paragraphs();
   const auto tables = reopened.tables();
   const auto sections = reopened.sections();
-  const auto page_size = reopened.page_size_pt();
+  const auto page_size = reopened.page_size();
   const auto page_orientation = reopened.page_orientation();
-  const auto page_margins = reopened.page_margins_pt();
+  const auto page_margins = reopened.page_margins();
   const auto comments = reopened.comments();
   const auto picture_sizes = reopened.picture_sizes_pt();
   const auto pictures = reopened.pictures();
@@ -128,8 +132,12 @@ int main() {
   assert(paragraphs[1].heading_level() == 3);
   assert(paragraphs[1].runs().size() == 2);
   assert(paragraphs[1].runs()[0].text() == "Heading ");
+  assert(paragraphs[1].runs()[0].style().character_style_id == "Strong");
+  assert(paragraphs[1].runs()[0].style().character_style_name == "Strong");
   assert(paragraphs[1].runs()[0].style().bold);
   assert(paragraphs[1].runs()[1].text() == "Wrapper");
+  assert(paragraphs[1].runs()[1].style().character_style_id == "Emphasis");
+  assert(paragraphs[1].runs()[1].style().character_style_name == "Emphasis");
   assert(paragraphs[1].runs()[1].style().font_name == "Georgia");
   assert(paragraphs[2].text() == "Plain paragraph");
   assert(paragraphs[2].alignment() == docxcpp::ParagraphAlignment::Inherit);
@@ -183,6 +191,8 @@ int main() {
   assert(reopened.comment_count() == 1);
 
   assert(tables.size() == 2);
+  assert(tables[0].style_id() == "LightShading-Accent1");
+  assert(tables[0].style_name() == "Light Shading Accent 1");
   assert(tables[0].row_count() == 3);
   assert(tables[0].column_count() == 3);
   assert(tables[0].rows().size() == 3);
@@ -208,6 +218,8 @@ int main() {
   assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[1].cells()[1].text() == "N22");
   assert(tables[0].cell(2, 2).text() == "C3");
   assert(tables[0].cell(2, 2).nested_tables().size() == 1);
+  assert(tables[0].cell(2, 2).nested_tables()[0].style_id() == "TableGrid");
+  assert(tables[0].cell(2, 2).nested_tables()[0].style_name() == "Table Grid");
   assert(tables[0].cell(2, 2).nested_tables()[0].row_count() == 2);
   assert(tables[0].cell(2, 2).nested_tables()[0].column_count() == 2);
   assert(tables[0].cell(2, 2).nested_tables()[0].cell(0, 0).text() == "N11");
@@ -215,6 +227,8 @@ int main() {
   assert(tables[0].cell(2, 2).nested_tables()[0].cell(1, 0).text() == "N21");
   assert(tables[0].cell(2, 2).nested_tables()[0].cell(1, 1).text() == "N22");
   assert(tables[1].rows().size() == 1);
+  assert(tables[1].style_id() == "TableGrid");
+  assert(tables[1].style_name() == "Table Grid");
   assert(tables[1].rows()[0].cells().size() == 1);
   assert(tables[1].rows()[0].cells()[0].grid_span() == 2);
   assert(tables[1].rows()[0].cells()[0].text() == "MergedStart\nMergedAlias");
@@ -223,26 +237,26 @@ int main() {
   assert(tables[1].cell(0, 0).text() == "MergedStart\nMergedAlias");
   assert(tables[1].cell(0, 1).text() == "MergedStart\nMergedAlias");
   assert(sections.size() == 1);
-  assert(sections[0].page_size_pt().width_pt == 612);
-  assert(sections[0].page_size_pt().height_pt == 792);
+  assert(std::llround(sections[0].page_size().width.pt()) == 612);
+  assert(std::llround(sections[0].page_size().height.pt()) == 792);
   assert(sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
-  assert(sections[0].page_margins_pt().top_pt == 72);
-  assert(sections[0].page_margins_pt().right_pt == 90);
-  assert(sections[0].page_margins_pt().bottom_pt == 72);
-  assert(sections[0].page_margins_pt().left_pt == 90);
-  assert(sections[0].page_margins_pt().header_pt == 36);
-  assert(sections[0].page_margins_pt().footer_pt == 36);
-  assert(sections[0].page_margins_pt().gutter_pt == 0);
-  assert(page_size.width_pt == 612);
-  assert(page_size.height_pt == 792);
+  assert(std::llround(sections[0].page_margins().top.pt()) == 72);
+  assert(std::llround(sections[0].page_margins().right.pt()) == 90);
+  assert(std::llround(sections[0].page_margins().bottom.pt()) == 72);
+  assert(std::llround(sections[0].page_margins().left.pt()) == 90);
+  assert(std::llround(sections[0].page_margins().header.pt()) == 36);
+  assert(std::llround(sections[0].page_margins().footer.pt()) == 36);
+  assert(std::llround(sections[0].page_margins().gutter.pt()) == 0);
+  assert(std::llround(page_size.width.pt()) == 612);
+  assert(std::llround(page_size.height.pt()) == 792);
   assert(page_orientation == docxcpp::PageOrientation::Landscape);
-  assert(page_margins.top_pt == 72);
-  assert(page_margins.right_pt == 90);
-  assert(page_margins.bottom_pt == 72);
-  assert(page_margins.left_pt == 90);
-  assert(page_margins.header_pt == 36);
-  assert(page_margins.footer_pt == 36);
-  assert(page_margins.gutter_pt == 0);
+  assert(std::llround(page_margins.top.pt()) == 72);
+  assert(std::llround(page_margins.right.pt()) == 90);
+  assert(std::llround(page_margins.bottom.pt()) == 72);
+  assert(std::llround(page_margins.left.pt()) == 90);
+  assert(std::llround(page_margins.header.pt()) == 36);
+  assert(std::llround(page_margins.footer.pt()) == 36);
+  assert(std::llround(page_margins.gutter.pt()) == 0);
   assert(picture_sizes.size() == 2);
   assert(picture_sizes[0].width_pt == 500);
   assert(picture_sizes[0].height_pt == 375);
@@ -269,6 +283,9 @@ int main() {
                                  package.entry("word/comments.xml").end());
   assert(xml.find("w:pStyle w:val=\"Heading2\"") != std::string::npos);
   assert(xml.find("w:pStyle w:val=\"Heading3\"") != std::string::npos);
+  assert(xml.find("w:rStyle w:val=\"Strong\"") != std::string::npos);
+  assert(xml.find("w:rStyle w:val=\"Emphasis\"") != std::string::npos);
+  assert(xml.find("w:tblStyle w:val=\"LightShading-Accent1\"") != std::string::npos);
   assert(xml.find("<w:keepLines w:val=\"0\"") != std::string::npos);
   assert(xml.find("<w:keepNext w:val=\"0\"") != std::string::npos);
   assert(xml.find("w:pgSz w:w=\"12240\" w:h=\"15840\" w:orient=\"landscape\"") !=
@@ -345,27 +362,72 @@ int main() {
     const auto multi_sections = multi_section_doc.sections();
     assert(multi_sections.size() == 2);
 
-    assert(multi_sections[0].page_size_pt().width_pt == 1000);
-    assert(multi_sections[0].page_size_pt().height_pt == 500);
+    assert(std::llround(multi_sections[0].page_size().width.pt()) == 1000);
+    assert(std::llround(multi_sections[0].page_size().height.pt()) == 500);
     assert(multi_sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
-    assert(multi_sections[0].page_margins_pt().top_pt == 72);
-    assert(multi_sections[0].page_margins_pt().right_pt == 36);
-    assert(multi_sections[0].page_margins_pt().bottom_pt == 108);
-    assert(multi_sections[0].page_margins_pt().left_pt == 54);
-    assert(multi_sections[0].page_margins_pt().header_pt == 27);
-    assert(multi_sections[0].page_margins_pt().footer_pt == 18);
-    assert(multi_sections[0].page_margins_pt().gutter_pt == 9);
+    assert(std::llround(multi_sections[0].page_margins().top.pt()) == 72);
+    assert(std::llround(multi_sections[0].page_margins().right.pt()) == 36);
+    assert(std::llround(multi_sections[0].page_margins().bottom.pt()) == 108);
+    assert(std::llround(multi_sections[0].page_margins().left.pt()) == 54);
+    assert(std::llround(multi_sections[0].page_margins().header.pt()) == 27);
+    assert(std::llround(multi_sections[0].page_margins().footer.pt()) == 18);
+    assert(std::llround(multi_sections[0].page_margins().gutter.pt()) == 9);
 
-    assert(multi_sections[1].page_size_pt().width_pt == 612);
-    assert(multi_sections[1].page_size_pt().height_pt == 792);
-    assert(multi_sections[1].page_orientation() == docxcpp::PageOrientation::Landscape);
-    assert(multi_sections[1].page_margins_pt().top_pt == 72);
-    assert(multi_sections[1].page_margins_pt().right_pt == 90);
-    assert(multi_sections[1].page_margins_pt().bottom_pt == 72);
-    assert(multi_sections[1].page_margins_pt().left_pt == 90);
-    assert(multi_sections[1].page_margins_pt().header_pt == 36);
-    assert(multi_sections[1].page_margins_pt().footer_pt == 36);
-    assert(multi_sections[1].page_margins_pt().gutter_pt == 0);
+    assert(std::llround(multi_sections[1].page_size().width.pt()) == 612);
+    assert(std::llround(multi_sections[1].page_size().height.pt()) == 792);
+  assert(multi_sections[1].page_orientation() == docxcpp::PageOrientation::Landscape);
+  assert(std::llround(multi_sections[1].page_margins().top.pt()) == 72);
+  assert(std::llround(multi_sections[1].page_margins().right.pt()) == 90);
+  assert(std::llround(multi_sections[1].page_margins().bottom.pt()) == 72);
+  assert(std::llround(multi_sections[1].page_margins().left.pt()) == 90);
+  assert(std::llround(multi_sections[1].page_margins().header.pt()) == 36);
+  assert(std::llround(multi_sections[1].page_margins().footer.pt()) == 36);
+  assert(std::llround(multi_sections[1].page_margins().gutter.pt()) == 0);
+  }
+
+  {
+    const auto a0 = docxcpp::standard_page_size(docxcpp::StandardPageSize::A0);
+    const auto a4 = docxcpp::standard_page_size(docxcpp::StandardPageSize::A4);
+    const auto a10 = docxcpp::standard_page_size(docxcpp::StandardPageSize::A10);
+    const auto b5 = docxcpp::standard_page_size(docxcpp::StandardPageSize::B5);
+    const auto letter = docxcpp::standard_page_size(docxcpp::StandardPageSize::Letter);
+    const auto legal = docxcpp::standard_page_size(docxcpp::StandardPageSize::Legal);
+    const auto ledger = docxcpp::standard_page_size(docxcpp::StandardPageSize::Ledger);
+    assert(std::llround(a0.width.mm()) == 841);
+    assert(std::llround(a0.height.mm()) == 1189);
+    assert(std::llround(a4.width.mm()) == 210);
+    assert(std::llround(a4.height.mm()) == 297);
+    assert(std::llround(a10.width.mm()) == 26);
+    assert(std::llround(a10.height.mm()) == 37);
+    assert(std::llround(b5.width.mm()) == 176);
+    assert(std::llround(b5.height.mm()) == 250);
+    assert(std::llround(letter.width.inches() * 100) == 850);
+    assert(std::llround(letter.height.inches() * 100) == 1100);
+    assert(std::llround(legal.width.inches() * 100) == 850);
+    assert(std::llround(legal.height.inches() * 100) == 1400);
+    assert(std::llround(ledger.width.inches() * 100) == 1700);
+    assert(std::llround(ledger.height.inches() * 100) == 1100);
+
+    docxcpp::Document a_series_doc;
+    a_series_doc.set_page_size(docxcpp::StandardPageSize::A3);
+    const auto a3_size = a_series_doc.page_size();
+    assert(std::llround(a3_size.width.mm()) == 297);
+    assert(std::llround(a3_size.height.mm()) == 420);
+
+    const docxcpp::Section statement_section(docxcpp::StandardPageSize::Statement);
+    assert(std::llround(statement_section.page_size().width.inches() * 100) == 550);
+    assert(std::llround(statement_section.page_size().height.inches() * 100) == 850);
+
+    const auto mm = docxcpp::Mm(210);
+    const auto cm = docxcpp::Cm(2.54);
+    const auto inches = docxcpp::Inches(1.0);
+    const auto pt = docxcpp::Pt(72);
+    const auto twips = docxcpp::Twips(1440);
+    assert(mm.twips() == 11906);
+    assert(cm.twips() == 1440);
+    assert(inches.twips() == 1440);
+    assert(pt.twips() == 1440);
+    assert(twips.twips() == 1440);
   }
 
   bool threw = false;
@@ -379,7 +441,7 @@ int main() {
 
   threw = false;
   try {
-    document.set_page_size_pt(0, 100);
+    document.set_page_size({docxcpp::Length::from_pt(0), docxcpp::Length::from_pt(100)});
   } catch (const std::invalid_argument&) {
     threw = true;
   }
@@ -388,8 +450,8 @@ int main() {
   threw = false;
   try {
     docxcpp::PageMargins margins;
-    margins.left_pt = -1;
-    document.set_page_margins_pt(margins);
+    margins.left = docxcpp::Length::from_pt(-1);
+    document.set_page_margins(margins);
   } catch (const std::invalid_argument&) {
     threw = true;
   }
@@ -398,8 +460,8 @@ int main() {
   threw = false;
   try {
     docxcpp::PageMargins margins;
-    margins.header_pt = -1;
-    document.set_page_margins_pt(margins);
+    margins.header = docxcpp::Length::from_pt(-1);
+    document.set_page_margins(margins);
   } catch (const std::invalid_argument&) {
     threw = true;
   }

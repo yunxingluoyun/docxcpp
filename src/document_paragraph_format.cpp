@@ -342,4 +342,14 @@ void Document::set_paragraph_pagination(std::size_t paragraph_index,
   dirty_ = true;
 }
 
+void Document::set_paragraph_widow_control(std::size_t paragraph_index,
+                                           std::optional<bool> widow_control) {
+  pugi::xml_node paragraph = paragraph_by_index_or_throw(*xml_, paragraph_index);
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties_local(paragraph);
+  set_on_off_property_local(p_pr, "w:widowControl", widow_control);
+  cleanup_if_empty_local(paragraph, p_pr);
+  dirty_ = true;
+}
+
 }  // namespace docxcpp

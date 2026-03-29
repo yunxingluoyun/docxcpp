@@ -45,17 +45,17 @@ int main(int argc, char** argv) {
 
   docxcpp::Document document;
 
-  document.set_page_size_pt(595, 842);
+  document.set_page_size(docxcpp::StandardPageSize::A4);
   document.set_page_orientation(docxcpp::PageOrientation::Portrait);
 
   docxcpp::PageMargins margins;
-  margins.top_pt = 72;
-  margins.right_pt = 54;
-  margins.bottom_pt = 72;
-  margins.left_pt = 54;
-  margins.header_pt = 24;
-  margins.footer_pt = 24;
-  document.set_page_margins_pt(margins);
+  margins.top = docxcpp::Inches(1.0);
+  margins.right = docxcpp::Cm(1.905);
+  margins.bottom = docxcpp::Inches(1.0);
+  margins.left = docxcpp::Cm(1.905);
+  margins.header = docxcpp::Pt(24);
+  margins.footer = docxcpp::Pt(24);
+  document.set_page_margins(margins);
 
   docxcpp::RunStyle title_style;
   title_style.bold = true;

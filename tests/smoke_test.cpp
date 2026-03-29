@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -37,49 +38,63 @@ int main() {
   title_style.font_size_pt = 20;
   title_style.color_hex = "#336699";
   title_style.font_name = "Arial";
+  title_style.character_style_name = "Emphasis";
+  title_style.all_caps = true;
+  title_style.east_asia_font_name = "Microsoft YaHei";
+  title_style.complex_script_font_name = "Amiri";
   title_style.highlight = "yellow";
   created.add_styled_heading("Document Title", 0, title_style,
                              docxcpp::ParagraphAlignment::Center);
-  created.set_page_size_pt(595, 842);
+  created.set_page_size(docxcpp::StandardPageSize::A4);
   created.set_page_orientation(docxcpp::PageOrientation::Landscape);
-  docxcpp::PageMargins margins;
-  margins.top_pt = 72;
-  margins.right_pt = 54;
-  margins.bottom_pt = 72;
-  margins.left_pt = 54;
-  margins.header_pt = 36;
-  margins.footer_pt = 24;
-  margins.gutter_pt = 18;
-  created.set_page_margins_pt(margins);
-  created.add_paragraph("alpha");
-  docxcpp::PageMargins second_section_margins;
-  second_section_margins.top_pt = 90;
-  second_section_margins.right_pt = 36;
-  second_section_margins.bottom_pt = 54;
-  second_section_margins.left_pt = 36;
-  second_section_margins.header_pt = 18;
-  second_section_margins.footer_pt = 18;
-  second_section_margins.gutter_pt = 0;
+  created.set_page_margins(docxcpp::PageMargins{
+      docxcpp::Length::from_inches(1.0),
+      docxcpp::Length::from_cm(1.905),
+      docxcpp::Length::from_mm(25.4),
+      docxcpp::Length::from_cm(1.905),
+      docxcpp::Length::from_cm(1.27),
+      docxcpp::Length::from_inches(1.0 / 3.0),
+      docxcpp::Length::from_inches(0.25),
+  });
+  auto alpha_paragraph = created.add_paragraph("alpha");
   docxcpp::RunStyle mixed_bold;
   mixed_bold.bold = true;
+  mixed_bold.character_style_id = "Strong";
+  mixed_bold.strike = true;
   mixed_bold.color_hex = "008800";
   docxcpp::RunStyle mixed_plain;
   mixed_plain.font_name = "Times New Roman";
+  mixed_plain.small_caps = true;
   std::vector<docxcpp::Run> mixed_runs{
       docxcpp::Run("mix-", mixed_bold),
       docxcpp::Run("ed", mixed_plain),
   };
   docxcpp::RunStyle header_style;
   header_style.bold = true;
+  header_style.superscript = true;
   header_style.color_hex = "4444AA";
   std::vector<docxcpp::Run> footer_runs{
       docxcpp::Run("foot-", mixed_bold),
       docxcpp::Run("mix", mixed_plain),
   };
+  auto preface_paragraph = alpha_paragraph.insert_paragraph_before(
+      {docxcpp::Run("pre", mixed_bold), docxcpp::Run("face", mixed_plain)},
+      docxcpp::ParagraphAlignment::Justify);
+  preface_paragraph.add_run(" note", header_style);
+  alpha_paragraph.add_run(" body", mixed_plain);
   created.add_section_break(docxcpp::Section(
-      docxcpp::PageSize{612, 792}, docxcpp::PageOrientation::Portrait, second_section_margins));
+      docxcpp::StandardPageSize::Letter, docxcpp::PageOrientation::Portrait,
+      docxcpp::PageMargins{
+          docxcpp::Length::from_inches(1.25),
+          docxcpp::Length::from_inches(0.5),
+          docxcpp::Length::from_inches(0.75),
+          docxcpp::Length::from_inches(0.5),
+          docxcpp::Length::from_inches(0.25),
+          docxcpp::Length::from_inches(0.25),
+          docxcpp::Length::from_inches(0.0),
+      }));
   created.add_paragraph("second section starts here");
-  created.set_paragraph_line_spacing(3, 1.5, docxcpp::LineSpacingMode::Multiple);
+  created.set_paragraph_line_spacing(4, 1.5, docxcpp::LineSpacingMode::Multiple);
   created.clear_header(0);
   created.add_header_paragraph(0, "First Header", docxcpp::ParagraphAlignment::Center);
   created.add_header_paragraph(0, "First Header Tail", docxcpp::ParagraphAlignment::Right);
@@ -90,7 +105,12 @@ int main() {
   created.set_header_text(1, "Second Header");
   created.clear_footer(1);
   created.add_footer_paragraph(1, "Second Footer");
-  created.add_footer_paragraph(1, "Footer Tail", docxcpp::ParagraphAlignment::Center);
+  docxcpp::RunStyle footer_style;
+  footer_style.italic = true;
+  footer_style.double_strike = true;
+  footer_style.color_hex = "AA44AA";
+  created.add_styled_footer_paragraph(1, "Footer Tail", footer_style,
+                                      docxcpp::ParagraphAlignment::Center);
   created.add_footer_paragraph(1, footer_runs, docxcpp::ParagraphAlignment::Right);
   created.set_even_and_odd_headers(true);
   created.set_section_different_first_page(0, true);
@@ -99,28 +119,31 @@ int main() {
   created.set_header_text(1, "Even Header", docxcpp::HeaderFooterType::EvenPage);
   created.add_footer_paragraph(1, "Even Footer", docxcpp::ParagraphAlignment::Left,
                                docxcpp::HeaderFooterType::EvenPage);
-  created.add_comment(1, "alpha note", "Codex", "CX");
-  created.set_paragraph_indentation_pt(1, 24, 12, -18);
-  created.set_paragraph_spacing_pt(1, 6, 10);
-  created.set_paragraph_line_spacing_pt(1, 18);
+  created.add_comment(2, "alpha note", "Codex", "CX");
+  created.set_paragraph_indentation_pt(2, 24, 12, -18);
+  created.set_paragraph_spacing_pt(2, 6, 10);
+  created.set_paragraph_line_spacing_pt(2, 18);
   created.set_paragraph_tab_stops(
-      1, {docxcpp::TabStop{72},
+      2, {docxcpp::TabStop{72},
           docxcpp::TabStop{144, docxcpp::TabAlignment::Right, docxcpp::TabLeader::Dots}});
-  created.set_paragraph_pagination(1, true, true, true);
+  created.set_paragraph_pagination(2, true, true, true);
+  created.set_paragraph_widow_control(2, false);
   created.add_hyperlink("OpenAI", "https://openai.com", docxcpp::ParagraphAlignment::Center);
   created.add_paragraph(mixed_runs, docxcpp::ParagraphAlignment::Left);
   created.add_page_break();
   docxcpp::RunStyle aside_style;
   aside_style.italic = true;
   aside_style.underline = true;
+  aside_style.subscript = true;
   aside_style.font_size_pt = 14;
   aside_style.color_hex = "AA2200";
   aside_style.font_name = "Courier New";
   aside_style.highlight = "green";
   created.add_styled_paragraph(" beta \nline 2", aside_style, docxcpp::ParagraphAlignment::Right);
-  created.set_paragraph_line_spacing(7, 24.0, docxcpp::LineSpacingMode::AtLeast);
+  created.set_paragraph_line_spacing(8, 24.0, docxcpp::LineSpacingMode::AtLeast);
   created.add_heading("Section", 1);
-  created.add_table(2, 3);
+  created.add_table(2, 3, "Light Shading - Accent 1");
+  created.set_table_style(0, "Medium Grid 1 Accent 1");
   created.set_table_cell(0, 0, 0, "r1c1");
   std::vector<docxcpp::Run> cell_runs{
       docxcpp::Run("r2", mixed_bold),
@@ -138,7 +161,7 @@ int main() {
   created.set_table_cell(0, 2, 1, "r3c2");
   created.set_table_cell(0, 2, 2, "r3c3");
   created.add_table_cell_paragraph(0, 2, 3, "r3c4");
-  created.add_nested_table(0, 2, 1, 1, 2);
+  created.add_nested_table(0, 2, 1, 1, 2, "Table Grid");
   created.set_nested_table_cell(0, 2, 1, 0, 0, 0, "nested-a");
   created.set_nested_table_cell(0, 2, 1, 0, 0, 1, "nested-b");
   docxcpp::PictureSize image_size;
@@ -157,9 +180,9 @@ int main() {
   const auto paragraphs = reopened.paragraphs();
   const auto tables = reopened.tables();
   const auto sections = reopened.sections();
-  const auto page_size = reopened.page_size_pt();
+  const auto page_size = reopened.page_size();
   const auto page_orientation = reopened.page_orientation();
-  const auto page_margins = reopened.page_margins_pt();
+  const auto page_margins = reopened.page_margins();
   const auto comments = reopened.comments();
   const auto headers = reopened.headers();
   const auto footers = reopened.footers();
@@ -176,7 +199,7 @@ int main() {
   const auto picture_sizes = reopened.picture_sizes_pt();
   const auto pictures = reopened.pictures();
 
-  assert(paragraphs.size() == 10);
+  assert(paragraphs.size() == 11);
   assert(paragraphs[0].text() == "Document Title");
   assert(paragraphs[0].alignment() == docxcpp::ParagraphAlignment::Center);
   assert(paragraphs[0].first_run_style().bold);
@@ -184,6 +207,13 @@ int main() {
   assert(!paragraphs[0].first_run_style().underline);
   assert(paragraphs[0].first_run_style().font_size_pt == 20);
   assert(paragraphs[0].first_run_style().font_name == "Arial");
+  assert(paragraphs[0].first_run_style().ascii_font_name == "Arial");
+  assert(paragraphs[0].first_run_style().h_ansi_font_name == "Arial");
+  assert(paragraphs[0].first_run_style().east_asia_font_name == "Microsoft YaHei");
+  assert(paragraphs[0].first_run_style().complex_script_font_name == "Amiri");
+  assert(paragraphs[0].first_run_style().character_style_id == "Emphasis");
+  assert(paragraphs[0].first_run_style().character_style_name == "Emphasis");
+  assert(paragraphs[0].first_run_style().all_caps);
   assert(paragraphs[0].first_run_style().color_hex == "336699");
   assert(paragraphs[0].first_run_style().highlight == "yellow");
   assert(!paragraphs[0].has_page_break());
@@ -193,102 +223,129 @@ int main() {
   assert(paragraphs[0].runs()[0].text() == "Document Title");
   assert(paragraphs[0].runs()[0].style().bold);
   assert(paragraphs[0].runs()[0].style().font_size_pt == 20);
-  assert(paragraphs[1].text() == "alpha");
-  assert(paragraphs[1].alignment() == docxcpp::ParagraphAlignment::Inherit);
-  assert(!paragraphs[1].has_page_break());
+  assert(paragraphs[1].text() == "preface note");
+  assert(paragraphs[1].alignment() == docxcpp::ParagraphAlignment::Justify);
   assert(paragraphs[1].style_id().empty());
   assert(paragraphs[1].heading_level() == -1);
-  assert(paragraphs[1].format().left_indent_pt.has_value());
-  assert(*paragraphs[1].format().left_indent_pt == 24);
-  assert(paragraphs[1].format().right_indent_pt.has_value());
-  assert(*paragraphs[1].format().right_indent_pt == 12);
-  assert(paragraphs[1].format().first_line_indent_pt.has_value());
-  assert(*paragraphs[1].format().first_line_indent_pt == -18);
-  assert(paragraphs[1].format().space_before_pt.has_value());
-  assert(*paragraphs[1].format().space_before_pt == 6);
-  assert(paragraphs[1].format().space_after_pt.has_value());
-  assert(*paragraphs[1].format().space_after_pt == 10);
-  assert(paragraphs[1].format().line_spacing_pt.has_value());
-  assert(*paragraphs[1].format().line_spacing_pt == 18);
-  assert(paragraphs[1].format().line_spacing_mode.has_value());
-  assert(*paragraphs[1].format().line_spacing_mode == docxcpp::LineSpacingMode::Exact);
-  assert(paragraphs[1].format().tab_stops.size() == 2);
-  assert(paragraphs[1].format().tab_stops[0].position_pt == 72);
-  assert(paragraphs[1].format().tab_stops[0].alignment == docxcpp::TabAlignment::Left);
-  assert(paragraphs[1].format().tab_stops[0].leader == docxcpp::TabLeader::Spaces);
-  assert(paragraphs[1].format().tab_stops[1].position_pt == 144);
-  assert(paragraphs[1].format().tab_stops[1].alignment == docxcpp::TabAlignment::Right);
-  assert(paragraphs[1].format().tab_stops[1].leader == docxcpp::TabLeader::Dots);
-  assert(paragraphs[1].format().keep_together.has_value());
-  assert(*paragraphs[1].format().keep_together);
-  assert(paragraphs[1].format().keep_with_next.has_value());
-  assert(*paragraphs[1].format().keep_with_next);
-  assert(paragraphs[1].format().page_break_before.has_value());
-  assert(*paragraphs[1].format().page_break_before);
-  assert(paragraphs[1].runs().size() == 2);
-  assert(paragraphs[1].runs()[0].text() == "alpha");
-  assert(!paragraphs[1].runs()[0].style().bold);
-  assert(paragraphs[1].runs()[1].text().empty());
-  assert(paragraphs[2].text().empty());
+  assert(paragraphs[1].runs().size() == 3);
+  assert(paragraphs[1].runs()[0].text() == "pre");
+  assert(paragraphs[1].runs()[0].style().bold);
+  assert(paragraphs[1].runs()[0].style().character_style_id == "Strong");
+  assert(paragraphs[1].runs()[0].style().character_style_name == "Strong");
+  assert(paragraphs[1].runs()[0].style().strike);
+  assert(paragraphs[1].runs()[0].style().color_hex == "008800");
+  assert(paragraphs[1].runs()[1].text() == "face");
+  assert(paragraphs[1].runs()[1].style().font_name == "Times New Roman");
+  assert(paragraphs[1].runs()[1].style().small_caps);
+  assert(paragraphs[1].runs()[2].text() == " note");
+  assert(paragraphs[1].runs()[2].style().bold);
+  assert(paragraphs[1].runs()[2].style().superscript);
+  assert(paragraphs[1].runs()[2].style().color_hex == "4444AA");
+  assert(paragraphs[2].text() == "alpha body");
+  assert(paragraphs[2].alignment() == docxcpp::ParagraphAlignment::Inherit);
+  assert(!paragraphs[2].has_page_break());
   assert(paragraphs[2].style_id().empty());
   assert(paragraphs[2].heading_level() == -1);
-  assert(paragraphs[2].runs().empty());
-  assert(paragraphs[3].text() == "second section starts here");
-  assert(paragraphs[3].runs().size() == 1);
-  assert(paragraphs[3].format().line_spacing_mode.has_value());
-  assert(*paragraphs[3].format().line_spacing_mode == docxcpp::LineSpacingMode::Multiple);
-  assert(paragraphs[3].format().line_spacing_multiple.has_value());
-  assert(*paragraphs[3].format().line_spacing_multiple == 1.5);
-  assert(paragraphs[4].text() == "OpenAI");
-  assert(paragraphs[4].alignment() == docxcpp::ParagraphAlignment::Center);
+  assert(paragraphs[2].format().left_indent_pt.has_value());
+  assert(*paragraphs[2].format().left_indent_pt == 24);
+  assert(paragraphs[2].format().right_indent_pt.has_value());
+  assert(*paragraphs[2].format().right_indent_pt == 12);
+  assert(paragraphs[2].format().first_line_indent_pt.has_value());
+  assert(*paragraphs[2].format().first_line_indent_pt == -18);
+  assert(paragraphs[2].format().space_before_pt.has_value());
+  assert(*paragraphs[2].format().space_before_pt == 6);
+  assert(paragraphs[2].format().space_after_pt.has_value());
+  assert(*paragraphs[2].format().space_after_pt == 10);
+  assert(paragraphs[2].format().line_spacing_pt.has_value());
+  assert(*paragraphs[2].format().line_spacing_pt == 18);
+  assert(paragraphs[2].format().line_spacing_mode.has_value());
+  assert(*paragraphs[2].format().line_spacing_mode == docxcpp::LineSpacingMode::Exact);
+  assert(paragraphs[2].format().tab_stops.size() == 2);
+  assert(paragraphs[2].format().tab_stops[0].position_pt == 72);
+  assert(paragraphs[2].format().tab_stops[0].alignment == docxcpp::TabAlignment::Left);
+  assert(paragraphs[2].format().tab_stops[0].leader == docxcpp::TabLeader::Spaces);
+  assert(paragraphs[2].format().tab_stops[1].position_pt == 144);
+  assert(paragraphs[2].format().tab_stops[1].alignment == docxcpp::TabAlignment::Right);
+  assert(paragraphs[2].format().tab_stops[1].leader == docxcpp::TabLeader::Dots);
+  assert(paragraphs[2].format().keep_together.has_value());
+  assert(*paragraphs[2].format().keep_together);
+  assert(paragraphs[2].format().keep_with_next.has_value());
+  assert(*paragraphs[2].format().keep_with_next);
+  assert(paragraphs[2].format().page_break_before.has_value());
+  assert(*paragraphs[2].format().page_break_before);
+  assert(paragraphs[2].format().widow_control.has_value());
+  assert(!*paragraphs[2].format().widow_control);
+  assert(paragraphs[2].runs().size() == 3);
+  assert(paragraphs[2].runs()[0].text() == "alpha");
+  assert(!paragraphs[2].runs()[0].style().bold);
+  assert(paragraphs[2].runs()[1].text() == " body");
+  assert(paragraphs[2].runs()[1].style().font_name == "Times New Roman");
+  assert(paragraphs[2].runs()[2].text().empty());
+  assert(paragraphs[3].text().empty());
+  assert(paragraphs[3].style_id().empty());
+  assert(paragraphs[3].heading_level() == -1);
+  assert(paragraphs[3].runs().empty());
+  assert(paragraphs[4].text() == "second section starts here");
   assert(paragraphs[4].runs().size() == 1);
-  assert(paragraphs[4].runs()[0].text() == "OpenAI");
-  assert(paragraphs[5].text() == "mix-ed");
-  assert(paragraphs[5].alignment() == docxcpp::ParagraphAlignment::Left);
-  assert(!paragraphs[5].has_page_break());
-  assert(paragraphs[5].runs().size() == 2);
-  assert(paragraphs[5].runs()[0].text() == "mix-");
-  assert(paragraphs[5].runs()[0].style().bold);
-  assert(paragraphs[5].runs()[0].style().color_hex == "008800");
-  assert(paragraphs[5].runs()[1].text() == "ed");
-  assert(paragraphs[5].runs()[1].style().font_name == "Times New Roman");
-  assert(paragraphs[6].text() == "\n");
-  assert(paragraphs[6].has_page_break());
-  assert(paragraphs[6].runs().size() == 1);
-  assert(paragraphs[6].runs()[0].text() == "\n");
-  assert(paragraphs[6].runs()[0].style().font_size_pt == 0);
-  assert(paragraphs[7].text() == " beta \nline 2");
-  assert(paragraphs[7].alignment() == docxcpp::ParagraphAlignment::Right);
-  assert(!paragraphs[7].first_run_style().bold);
-  assert(paragraphs[7].first_run_style().italic);
-  assert(paragraphs[7].first_run_style().underline);
-  assert(paragraphs[7].first_run_style().font_size_pt == 14);
-  assert(paragraphs[7].first_run_style().font_name == "Courier New");
-  assert(paragraphs[7].first_run_style().color_hex == "AA2200");
-  assert(paragraphs[7].first_run_style().highlight == "green");
-  assert(!paragraphs[7].has_page_break());
-  assert(paragraphs[7].style_id().empty());
-  assert(paragraphs[7].heading_level() == -1);
+  assert(paragraphs[4].format().line_spacing_mode.has_value());
+  assert(*paragraphs[4].format().line_spacing_mode == docxcpp::LineSpacingMode::Multiple);
+  assert(paragraphs[4].format().line_spacing_multiple.has_value());
+  assert(*paragraphs[4].format().line_spacing_multiple == 1.5);
+  assert(paragraphs[5].text() == "OpenAI");
+  assert(paragraphs[5].alignment() == docxcpp::ParagraphAlignment::Center);
+  assert(paragraphs[5].runs().size() == 1);
+  assert(paragraphs[5].runs()[0].text() == "OpenAI");
+  assert(paragraphs[6].text() == "mix-ed");
+  assert(paragraphs[6].alignment() == docxcpp::ParagraphAlignment::Left);
+  assert(!paragraphs[6].has_page_break());
+  assert(paragraphs[6].runs().size() == 2);
+  assert(paragraphs[6].runs()[0].text() == "mix-");
+  assert(paragraphs[6].runs()[0].style().bold);
+  assert(paragraphs[6].runs()[0].style().character_style_id == "Strong");
+  assert(paragraphs[6].runs()[0].style().strike);
+  assert(paragraphs[6].runs()[0].style().color_hex == "008800");
+  assert(paragraphs[6].runs()[1].text() == "ed");
+  assert(paragraphs[6].runs()[1].style().font_name == "Times New Roman");
+  assert(paragraphs[6].runs()[1].style().small_caps);
+  assert(paragraphs[7].text() == "\n");
+  assert(paragraphs[7].has_page_break());
   assert(paragraphs[7].runs().size() == 1);
-  assert(paragraphs[7].runs()[0].text() == " beta \nline 2");
-  assert(paragraphs[7].runs()[0].style().italic);
-  assert(paragraphs[7].runs()[0].style().underline);
-  assert(paragraphs[7].runs()[0].style().font_name == "Courier New");
-  assert(paragraphs[7].format().line_spacing_mode.has_value());
-  assert(*paragraphs[7].format().line_spacing_mode == docxcpp::LineSpacingMode::AtLeast);
-  assert(paragraphs[7].format().line_spacing_pt.has_value());
-  assert(*paragraphs[7].format().line_spacing_pt == 24);
-  assert(paragraphs[8].text() == "Section");
-  assert(paragraphs[8].alignment() == docxcpp::ParagraphAlignment::Inherit);
-  assert(paragraphs[8].style_id() == "Heading1");
-  assert(paragraphs[8].heading_level() == 1);
+  assert(paragraphs[7].runs()[0].text() == "\n");
+  assert(paragraphs[7].runs()[0].style().font_size_pt == 0);
+  assert(paragraphs[8].text() == " beta \nline 2");
+  assert(paragraphs[8].alignment() == docxcpp::ParagraphAlignment::Right);
+  assert(!paragraphs[8].first_run_style().bold);
+  assert(paragraphs[8].first_run_style().italic);
+  assert(paragraphs[8].first_run_style().underline);
+  assert(paragraphs[8].first_run_style().subscript);
+  assert(paragraphs[8].first_run_style().font_size_pt == 14);
+  assert(paragraphs[8].first_run_style().font_name == "Courier New");
+  assert(paragraphs[8].first_run_style().color_hex == "AA2200");
+  assert(paragraphs[8].first_run_style().highlight == "green");
+  assert(!paragraphs[8].has_page_break());
+  assert(paragraphs[8].style_id().empty());
+  assert(paragraphs[8].heading_level() == -1);
   assert(paragraphs[8].runs().size() == 1);
-  assert(paragraphs[8].runs()[0].text() == "Section");
-  assert(paragraphs[9].text().empty());
-  assert(paragraphs[9].style_id().empty());
-  assert(paragraphs[9].heading_level() == -1);
+  assert(paragraphs[8].runs()[0].text() == " beta \nline 2");
+  assert(paragraphs[8].runs()[0].style().italic);
+  assert(paragraphs[8].runs()[0].style().underline);
+  assert(paragraphs[8].runs()[0].style().subscript);
+  assert(paragraphs[8].runs()[0].style().font_name == "Courier New");
+  assert(paragraphs[8].format().line_spacing_mode.has_value());
+  assert(*paragraphs[8].format().line_spacing_mode == docxcpp::LineSpacingMode::AtLeast);
+  assert(paragraphs[8].format().line_spacing_pt.has_value());
+  assert(*paragraphs[8].format().line_spacing_pt == 24);
+  assert(paragraphs[9].text() == "Section");
+  assert(paragraphs[9].alignment() == docxcpp::ParagraphAlignment::Inherit);
+  assert(paragraphs[9].style_id() == "Heading1");
+  assert(paragraphs[9].heading_level() == 1);
   assert(paragraphs[9].runs().size() == 1);
-  assert(paragraphs[9].runs()[0].text().empty());
+  assert(paragraphs[9].runs()[0].text() == "Section");
+  assert(paragraphs[10].text().empty());
+  assert(paragraphs[10].style_id().empty());
+  assert(paragraphs[10].heading_level() == -1);
+  assert(paragraphs[10].runs().size() == 1);
+  assert(paragraphs[10].runs()[0].text().empty());
   assert(comments.size() == 1);
   assert(comments[0].id == 0);
   assert(comments[0].text == "alpha note");
@@ -325,6 +382,7 @@ int main() {
   assert(header_paragraphs_0[2].alignment() == docxcpp::ParagraphAlignment::Left);
   assert(header_paragraphs_0[2].runs().size() == 1);
   assert(header_paragraphs_0[2].runs()[0].style().bold);
+  assert(header_paragraphs_0[2].runs()[0].style().superscript);
   assert(header_paragraphs_0[2].runs()[0].style().color_hex == "4444AA");
   assert(header_paragraphs_1.size() == 1);
   assert(header_paragraphs_1[0].text() == "Second Header");
@@ -334,17 +392,25 @@ int main() {
   assert(footer_paragraphs_1[0].text() == "Second Footer");
   assert(footer_paragraphs_1[1].text() == "Footer Tail");
   assert(footer_paragraphs_1[1].alignment() == docxcpp::ParagraphAlignment::Center);
+  assert(footer_paragraphs_1[1].runs().size() == 1);
+  assert(footer_paragraphs_1[1].runs()[0].style().italic);
+  assert(footer_paragraphs_1[1].runs()[0].style().double_strike);
+  assert(footer_paragraphs_1[1].runs()[0].style().color_hex == "AA44AA");
   assert(footer_paragraphs_1[2].text() == "foot-mix");
   assert(footer_paragraphs_1[2].alignment() == docxcpp::ParagraphAlignment::Right);
   assert(footer_paragraphs_1[2].runs().size() == 2);
   assert(footer_paragraphs_1[2].runs()[0].style().bold);
+  assert(footer_paragraphs_1[2].runs()[0].style().strike);
   assert(footer_paragraphs_1[2].runs()[1].style().font_name == "Times New Roman");
+  assert(footer_paragraphs_1[2].runs()[1].style().small_caps);
   assert(first_header_paragraphs_0.size() == 1);
   assert(first_header_paragraphs_0[0].text() == "First Page Header");
   assert(even_footer_paragraphs_1.size() == 1);
   assert(even_footer_paragraphs_1[0].text() == "Even Footer");
 
   assert(tables.size() == 1);
+  assert(tables[0].style_id() == "MediumGrid1-Accent1");
+  assert(tables[0].style_name() == "Medium Grid 1 Accent 1");
   assert(tables[0].row_count() == 3);
   assert(tables[0].column_count() == 4);
   assert(tables[0].rows().size() == 3);
@@ -362,6 +428,8 @@ int main() {
   assert(tables[0].rows()[2].cells()[0].text() == "r3c1");
   assert(tables[0].rows()[2].cells()[1].text() == "r3c2");
   assert(tables[0].rows()[2].cells()[1].nested_tables().size() == 1);
+  assert(tables[0].rows()[2].cells()[1].nested_tables()[0].style_id() == "TableGrid");
+  assert(tables[0].rows()[2].cells()[1].nested_tables()[0].style_name() == "Table Grid");
   assert(tables[0].rows()[2].cells()[1].nested_tables()[0].rows().size() == 1);
   assert(tables[0].rows()[2].cells()[1].nested_tables()[0].rows()[0].cells()[0].text() == "nested-a");
   assert(tables[0].rows()[2].cells()[1].nested_tables()[0].rows()[0].cells()[1].text() == "nested-b");
@@ -378,36 +446,56 @@ int main() {
   assert(tables[0].cell(2, 1).nested_tables()[0].cell(0, 0).text() == "nested-a");
   assert(tables[0].cell(2, 1).nested_tables()[0].cell(0, 1).text() == "nested-b");
   assert(sections.size() == 2);
-  assert(sections[0].page_size_pt().width_pt == 595);
-  assert(sections[0].page_size_pt().height_pt == 842);
+  assert(std::llround(sections[0].page_size().width.pt()) == 595);
+  assert(std::llround(sections[0].page_size().height.pt()) == 842);
+  assert(sections[0].page_size().width.twips() == 11906);
+  assert(sections[0].page_size().height.twips() == 16838);
   assert(sections[0].page_orientation() == docxcpp::PageOrientation::Landscape);
-  assert(sections[0].page_margins_pt().top_pt == 72);
-  assert(sections[0].page_margins_pt().right_pt == 54);
-  assert(sections[0].page_margins_pt().bottom_pt == 72);
-  assert(sections[0].page_margins_pt().left_pt == 54);
-  assert(sections[0].page_margins_pt().header_pt == 36);
-  assert(sections[0].page_margins_pt().footer_pt == 24);
-  assert(sections[0].page_margins_pt().gutter_pt == 18);
-  assert(sections[1].page_size_pt().width_pt == 612);
-  assert(sections[1].page_size_pt().height_pt == 792);
+  assert(std::llround(sections[0].page_margins().top.pt()) == 72);
+  assert(std::llround(sections[0].page_margins().right.pt()) == 54);
+  assert(std::llround(sections[0].page_margins().bottom.pt()) == 72);
+  assert(std::llround(sections[0].page_margins().left.pt()) == 54);
+  assert(std::llround(sections[0].page_margins().header.pt()) == 36);
+  assert(std::llround(sections[0].page_margins().footer.pt()) == 24);
+  assert(std::llround(sections[0].page_margins().gutter.pt()) == 18);
+  assert(sections[0].page_margins().top.twips() == 1440);
+  assert(sections[0].page_margins().right.twips() == 1080);
+  assert(sections[0].page_margins().bottom.twips() == 1440);
+  assert(sections[0].page_margins().left.twips() == 1080);
+  assert(sections[0].page_margins().header.twips() == 720);
+  assert(sections[0].page_margins().footer.twips() == 480);
+  assert(sections[0].page_margins().gutter.twips() == 360);
+  assert(std::llround(sections[1].page_size().width.pt()) == 612);
+  assert(std::llround(sections[1].page_size().height.pt()) == 792);
+  assert(sections[1].page_size().width.twips() == 12240);
+  assert(sections[1].page_size().height.twips() == 15840);
   assert(sections[1].page_orientation() == docxcpp::PageOrientation::Portrait);
-  assert(sections[1].page_margins_pt().top_pt == 90);
-  assert(sections[1].page_margins_pt().right_pt == 36);
-  assert(sections[1].page_margins_pt().bottom_pt == 54);
-  assert(sections[1].page_margins_pt().left_pt == 36);
-  assert(sections[1].page_margins_pt().header_pt == 18);
-  assert(sections[1].page_margins_pt().footer_pt == 18);
-  assert(sections[1].page_margins_pt().gutter_pt == 0);
-  assert(page_size.width_pt == 612);
-  assert(page_size.height_pt == 792);
+  assert(std::llround(sections[1].page_margins().top.pt()) == 90);
+  assert(std::llround(sections[1].page_margins().right.pt()) == 36);
+  assert(std::llround(sections[1].page_margins().bottom.pt()) == 54);
+  assert(std::llround(sections[1].page_margins().left.pt()) == 36);
+  assert(std::llround(sections[1].page_margins().header.pt()) == 18);
+  assert(std::llround(sections[1].page_margins().footer.pt()) == 18);
+  assert(std::llround(sections[1].page_margins().gutter.pt()) == 0);
+  assert(std::llround(page_size.width.pt()) == 612);
+  assert(std::llround(page_size.height.pt()) == 792);
+  assert(reopened.page_size().width.twips() == 12240);
+  assert(reopened.page_size().height.twips() == 15840);
   assert(page_orientation == docxcpp::PageOrientation::Portrait);
-  assert(page_margins.top_pt == 90);
-  assert(page_margins.right_pt == 36);
-  assert(page_margins.bottom_pt == 54);
-  assert(page_margins.left_pt == 36);
-  assert(page_margins.header_pt == 18);
-  assert(page_margins.footer_pt == 18);
-  assert(page_margins.gutter_pt == 0);
+  assert(std::llround(page_margins.top.pt()) == 90);
+  assert(std::llround(page_margins.right.pt()) == 36);
+  assert(std::llround(page_margins.bottom.pt()) == 54);
+  assert(std::llround(page_margins.left.pt()) == 36);
+  assert(std::llround(page_margins.header.pt()) == 18);
+  assert(std::llround(page_margins.footer.pt()) == 18);
+  assert(std::llround(page_margins.gutter.pt()) == 0);
+  assert(reopened.page_margins().top.twips() == 1800);
+  assert(reopened.page_margins().right.twips() == 720);
+  assert(reopened.page_margins().bottom.twips() == 1080);
+  assert(reopened.page_margins().left.twips() == 720);
+  assert(reopened.page_margins().header.twips() == 360);
+  assert(reopened.page_margins().footer.twips() == 360);
+  assert(reopened.page_margins().gutter.twips() == 0);
   assert(picture_sizes.size() == 2);
   assert(picture_sizes[0].width_pt == 36);
   assert(picture_sizes[0].height_pt == 36);
@@ -479,6 +567,7 @@ int main() {
   assert(xml.find("w:jc w:val=\"center\"") != std::string::npos);
   assert(xml.find("w:jc w:val=\"right\"") != std::string::npos);
   assert(xml.find("w:jc w:val=\"left\"") != std::string::npos);
+  assert(xml.find("w:jc w:val=\"both\"") != std::string::npos);
   assert(xml.find("<w:b") != std::string::npos);
   assert(xml.find("<w:i") != std::string::npos);
   assert(xml.find("<w:u w:val=\"single\"") != std::string::npos);
@@ -487,10 +576,18 @@ int main() {
   assert(xml.find("w:color w:val=\"336699\"") != std::string::npos);
   assert(xml.find("w:color w:val=\"AA2200\"") != std::string::npos);
   assert(xml.find("w:color w:val=\"008800\"") != std::string::npos);
-  assert(xml.find("w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"") != std::string::npos);
+  assert(xml.find("w:rStyle w:val=\"Emphasis\"") != std::string::npos);
+  assert(xml.find("w:rStyle w:val=\"Strong\"") != std::string::npos);
+  assert(xml.find("w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Microsoft YaHei\" w:cs=\"Amiri\"") !=
+         std::string::npos);
   assert(xml.find("w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\"") != std::string::npos);
   assert(xml.find("w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"") !=
          std::string::npos);
+  assert(xml.find("<w:strike") != std::string::npos);
+  assert(xml.find("<w:caps") != std::string::npos);
+  assert(xml.find("<w:smallCaps") != std::string::npos);
+  assert(xml.find("w:vertAlign w:val=\"superscript\"") != std::string::npos);
+  assert(xml.find("w:vertAlign w:val=\"subscript\"") != std::string::npos);
   assert(xml.find("w:ind w:left=\"480\" w:right=\"240\" w:hanging=\"360\"") !=
          std::string::npos);
   assert(xml.find("w:spacing w:before=\"120\" w:after=\"200\" w:line=\"360\" w:lineRule=\"exact\"") !=
@@ -503,6 +600,7 @@ int main() {
   assert(xml.find("<w:keepLines") != std::string::npos);
   assert(xml.find("<w:keepNext") != std::string::npos);
   assert(xml.find("<w:pageBreakBefore") != std::string::npos);
+  assert(xml.find("<w:widowControl w:val=\"0\"") != std::string::npos);
   assert(xml.find("<w:hyperlink r:id=\"") != std::string::npos);
   assert(xml.find("<w:commentRangeStart w:id=\"0\"") != std::string::npos);
   assert(xml.find("<w:commentRangeEnd w:id=\"0\"") != std::string::npos);
@@ -510,7 +608,9 @@ int main() {
   assert(xml.find("w:highlight w:val=\"yellow\"") != std::string::npos);
   assert(xml.find("w:highlight w:val=\"green\"") != std::string::npos);
   assert(xml.find("w:gridSpan w:val=\"2\"") != std::string::npos);
-  assert(xml.find("w:pgSz w:w=\"11900\" w:h=\"16840\" w:orient=\"landscape\"") !=
+  assert(xml.find("w:tblStyle w:val=\"MediumGrid1-Accent1\"") != std::string::npos);
+  assert(xml.find("w:tblStyle w:val=\"TableGrid\"") != std::string::npos);
+  assert(xml.find("w:pgSz w:w=\"11906\" w:h=\"16838\" w:orient=\"landscape\"") !=
          std::string::npos);
   assert(xml.find(
              "w:pgMar w:top=\"1440\" w:right=\"1080\" w:bottom=\"1440\" w:left=\"1080\" w:header=\"720\" w:footer=\"480\" w:gutter=\"360\"") !=
@@ -556,6 +656,8 @@ int main() {
   assert(footer1_xml.find("First Footer") != std::string::npos);
   assert(footer2_xml.find("Second Footer") != std::string::npos);
   assert(footer2_xml.find("Footer Tail") != std::string::npos);
+  assert(footer2_xml.find("<w:dstrike") != std::string::npos);
+  assert(footer2_xml.find("w:color w:val=\"AA44AA\"") != std::string::npos);
   assert(footer2_xml.find("foot-") != std::string::npos);
   assert(footer2_xml.find("mix") != std::string::npos);
   assert(footer2_xml.find("w:jc w:val=\"center\"") != std::string::npos);

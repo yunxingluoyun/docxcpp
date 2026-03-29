@@ -34,7 +34,10 @@ std::size_t TableRow::column_count() const noexcept {
   return columns;
 }
 
-Table::Table(std::vector<TableRow> rows) : rows_(std::move(rows)) {}
+Table::Table(std::vector<TableRow> rows, std::string style_id, std::string style_name)
+    : rows_(std::move(rows)),
+      style_id_(std::move(style_id)),
+      style_name_(std::move(style_name)) {}
 
 const std::vector<TableRow>& Table::rows() const noexcept { return rows_; }
 
@@ -47,6 +50,10 @@ std::size_t Table::column_count() const noexcept {
   }
   return columns;
 }
+
+const std::string& Table::style_id() const noexcept { return style_id_; }
+
+const std::string& Table::style_name() const noexcept { return style_name_; }
 
 const TableCell& Table::cell(std::size_t row_index, std::size_t col_index) const {
   if (row_index >= rows_.size()) {
