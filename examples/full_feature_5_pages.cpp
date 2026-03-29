@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -10,14 +11,17 @@
 
 namespace {
 
+// 读取图片文件，供正文和表格单元格中的图片示例复用。
 std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) {
     throw std::runtime_error("failed to open image file: " + path.string());
   }
+
   stream.seekg(0, std::ios::end);
   const auto size = static_cast<std::size_t>(stream.tellg());
   stream.seekg(0, std::ios::beg);
+
   std::vector<std::uint8_t> bytes(size);
   if (size > 0) {
     stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
@@ -25,6 +29,7 @@ std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
   return bytes;
 }
 
+// 返回最后一个段落的索引，便于给刚写入的段落继续配置格式或批注。
 std::size_t last_paragraph_index(const docxcpp::Document& document) {
   const auto paragraphs = document.paragraphs();
   if (paragraphs.empty()) {
@@ -45,6 +50,7 @@ int main(int argc, char** argv) {
 
   docxcpp::Document document;
 
+  // 第 1 页：页面设置与首页内容。
   document.set_page_size(docxcpp::StandardPageSize::Letter);
   document.set_page_orientation(docxcpp::PageOrientation::Landscape);
 
@@ -73,9 +79,11 @@ int main(int argc, char** argv) {
   docxcpp::RunStyle strong_style;
   strong_style.bold = true;
   strong_style.color_hex = "8A1538";
+
   docxcpp::RunStyle code_style;
   code_style.font_name = "Courier New";
   code_style.underline = true;
+
   std::vector<docxcpp::Run> mixed_runs{
       docxcpp::Run("这是", strong_style),
       docxcpp::Run("混合", code_style),
@@ -93,6 +101,7 @@ int main(int argc, char** argv) {
   document.add_hyperlink("项目主页", "https://example.com/docxcpp-demo",
                          docxcpp::ParagraphAlignment::Right, hyperlink_style);
 
+  // 第 2 页：段落格式、分页控制和样式化正文。
   document.add_page_break();
 
   std::vector<docxcpp::Run> heading_runs{
@@ -119,6 +128,7 @@ int main(int argc, char** argv) {
   document.set_paragraph_line_spacing_pt(formatted_index, 20);
   document.set_paragraph_pagination(formatted_index, true, false, std::nullopt);
 
+  // 第 3 页：表格、超链接、正文图片、单元格图片。
   document.add_page_break();
 
   document.add_heading("第 3 页 表格与图片", 1);
@@ -150,6 +160,7 @@ int main(int argc, char** argv) {
                                           "buffer-cell");
   document.merge_table_cells(0, 0, 0, 0, 1);
 
+  // 第 4 页：page_break_before 和普通正文的组合。
   auto page4_intro =
       document.add_paragraph("第 4 页通过当前段落上的 page_break_before 生成。");
   page4_intro.add_run(" 这能验证分页相关 API 在中文文本下也能正常工作。", body_style);
@@ -159,6 +170,7 @@ int main(int argc, char** argv) {
   document.add_paragraph(
       "这一页继续追加普通正文，用来确认强制分页后的内容顺序保持正确。");
 
+  // 第 5 页：显式分页后的总结页面。
   document.add_page_break();
 
   document.add_heading("第 5 页 总结", 1);

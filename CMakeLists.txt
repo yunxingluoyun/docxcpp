@@ -91,6 +91,15 @@ target_link_libraries(docxcpp_example PRIVATE docxcpp)
 add_executable(docxcpp_full_feature_example examples/full_feature_5_pages.cpp)
 target_link_libraries(docxcpp_full_feature_example PRIVATE docxcpp)
 
+add_executable(docxcpp_read_existing_example examples/read_existing.cpp)
+target_link_libraries(docxcpp_read_existing_example PRIVATE docxcpp)
+
+add_executable(docxcpp_sections_headers_footers_example examples/sections_headers_footers.cpp)
+target_link_libraries(docxcpp_sections_headers_footers_example PRIVATE docxcpp)
+
+add_executable(docxcpp_styles_and_tables_example examples/styles_and_tables.cpp)
+target_link_libraries(docxcpp_styles_and_tables_example PRIVATE docxcpp)
+
 enable_testing()
 
 add_executable(docxcpp_smoke_test tests/smoke_test.cpp)

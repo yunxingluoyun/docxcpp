@@ -131,6 +131,18 @@ document.save("output.docx");
 
 覆盖标题、混合 Run、段落格式、表格（含嵌套与合并）、图片、超链接、批注、Section Break、Header/Footer。
 
+**读取已有文档** — [examples/read_existing.cpp](examples/read_existing.cpp)
+
+用于演示如何打开现有 `.docx`，读取段落、表格、批注、图片和 section 摘要。
+
+**页面、分节、页眉页脚** — [examples/sections_headers_footers.cpp](examples/sections_headers_footers.cpp)
+
+用于演示 `Section`、页面尺寸、页边距、首页不同、奇偶页不同以及页眉页脚段落。
+
+**字符样式与表格样式** — [examples/styles_and_tables.cpp](examples/styles_and_tables.cpp)
+
+用于演示字符样式引用、表格样式引用、插入段落、单元格合并和嵌套表格。
+
 **页面单位示例**
 
 ```cpp
