@@ -11,6 +11,42 @@ namespace docxcpp {
 
 namespace {
 
+constexpr double kAutoLineUnit = 240.0;
+
+const char* tab_alignment_value_local(TabAlignment alignment) {
+  switch (alignment) {
+    case TabAlignment::Center:
+      return "center";
+    case TabAlignment::Right:
+      return "right";
+    case TabAlignment::Decimal:
+      return "decimal";
+    case TabAlignment::Bar:
+      return "bar";
+    case TabAlignment::Left:
+    default:
+      return "left";
+  }
+}
+
+const char* tab_leader_value_local(TabLeader leader) {
+  switch (leader) {
+    case TabLeader::Dots:
+      return "dot";
+    case TabLeader::Dashes:
+      return "hyphen";
+    case TabLeader::Lines:
+      return "underscore";
+    case TabLeader::Heavy:
+      return "heavy";
+    case TabLeader::MiddleDot:
+      return "middleDot";
+    case TabLeader::Spaces:
+    default:
+      return "none";
+  }
+}
+
 pugi::xml_node child_named_local(const pugi::xml_node& parent, const char* name) {
   for (const pugi::xml_node& child : parent.children()) {
     if (std::string_view(child.name()) == name) {
@@ -211,14 +247,22 @@ void Document::set_paragraph_spacing_pt(std::size_t paragraph_index,
 
 void Document::set_paragraph_line_spacing_pt(std::size_t paragraph_index,
                                              std::optional<int> line_spacing_pt) {
+  set_paragraph_line_spacing(
+      paragraph_index,
+      line_spacing_pt ? std::optional<double>(static_cast<double>(*line_spacing_pt)) : std::nullopt,
+      LineSpacingMode::Exact);
+}
+
+void Document::set_paragraph_line_spacing(std::size_t paragraph_index, std::optional<double> value,
+                                          LineSpacingMode mode) {
   pugi::xml_node paragraph = paragraph_by_index_or_throw(*xml_, paragraph_index);
-  if (line_spacing_pt && *line_spacing_pt <= 0) {
+  if (value && *value <= 0) {
     throw std::invalid_argument("line spacing must be greater than zero");
   }
 
   pugi::xml_node p_pr = get_or_add_paragraph_properties_local(paragraph);
   pugi::xml_node spacing = child_named_local(p_pr, "w:spacing");
-  if (!spacing && line_spacing_pt) {
+  if (!spacing && value) {
     spacing = p_pr.append_child("w:spacing");
   }
   if (spacing) {
@@ -228,12 +272,57 @@ void Document::set_paragraph_line_spacing_pt(std::size_t paragraph_index,
     if (spacing.attribute("w:lineRule")) {
       spacing.remove_attribute("w:lineRule");
     }
-    if (line_spacing_pt.has_value()) {
-      const auto twips = std::to_string(*line_spacing_pt * 20);
-      spacing.append_attribute("w:line").set_value(twips.c_str());
-      spacing.append_attribute("w:lineRule").set_value("exact");
+    if (value.has_value()) {
+      std::string line_value;
+      const char* rule_value = nullptr;
+      switch (mode) {
+        case LineSpacingMode::Exact:
+          line_value = std::to_string(static_cast<int>(*value * 20.0));
+          rule_value = "exact";
+          break;
+        case LineSpacingMode::AtLeast:
+          line_value = std::to_string(static_cast<int>(*value * 20.0));
+          rule_value = "atLeast";
+          break;
+        case LineSpacingMode::Multiple:
+          line_value = std::to_string(static_cast<int>(*value * kAutoLineUnit));
+          rule_value = "auto";
+          break;
+      }
+      spacing.append_attribute("w:line").set_value(line_value.c_str());
+      spacing.append_attribute("w:lineRule").set_value(rule_value);
     }
     cleanup_if_empty_local(p_pr, spacing);
+    cleanup_if_empty_local(paragraph, p_pr);
+  }
+  dirty_ = true;
+}
+
+void Document::set_paragraph_tab_stops(std::size_t paragraph_index,
+                                       const std::vector<TabStop>& tab_stops) {
+  pugi::xml_node paragraph = paragraph_by_index_or_throw(*xml_, paragraph_index);
+  for (const TabStop& tab_stop : tab_stops) {
+    if (tab_stop.position_pt <= 0) {
+      throw std::invalid_argument("tab stop position must be greater than zero");
+    }
+  }
+
+  pugi::xml_node p_pr = get_or_add_paragraph_properties_local(paragraph);
+  pugi::xml_node tabs = child_named_local(p_pr, "w:tabs");
+  if (!tabs && !tab_stops.empty()) {
+    tabs = p_pr.append_child("w:tabs");
+  }
+  if (tabs) {
+    while (tabs.first_child()) {
+      tabs.remove_child(tabs.first_child());
+    }
+    for (const TabStop& tab_stop : tab_stops) {
+      pugi::xml_node tab = tabs.append_child("w:tab");
+      tab.append_attribute("w:val").set_value(tab_alignment_value_local(tab_stop.alignment));
+      tab.append_attribute("w:leader").set_value(tab_leader_value_local(tab_stop.leader));
+      tab.append_attribute("w:pos").set_value(std::to_string(tab_stop.position_pt * 20).c_str());
+    }
+    cleanup_if_empty_local(p_pr, tabs);
     cleanup_if_empty_local(paragraph, p_pr);
   }
   dirty_ = true;

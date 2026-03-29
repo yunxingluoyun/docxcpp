@@ -75,13 +75,30 @@ int main() {
   assert(project_link.hyperlinks()[0].text == "Project");
   assert(project_link.hyperlinks()[0].url == "https://example.com/project");
   document.add_table(2, 2);
+  document.add_table_row(0);
+  document.add_table_column(0);
   document.set_table_cell(0, 0, 0, "A1");
   document.set_table_cell(0, 0, 1, paragraph_runs);
+  document.set_table_cell(0, 0, 2, "A3");
   document.add_table_cell_paragraph(0, 0, 0, "A1 second");
   document.add_table_cell_paragraph(0, 1, 0, heading_runs);
   document.add_hyperlink_to_table_cell(0, 1, 0, "CellLink", "https://example.com/cell");
   document.add_picture_data(image_bytes, "jpeg");
   document.add_picture_data_to_table_cell(0, 1, 1, image_bytes, "jpeg", "buffered");
+  document.set_table_cell(0, 1, 2, "B3");
+  document.set_table_cell(0, 2, 0, "C1");
+  document.set_table_cell(0, 2, 1, "C2");
+  document.add_table_cell_paragraph(0, 2, 1, "C2 second");
+  document.set_table_cell(0, 2, 2, "C3");
+  document.add_nested_table(0, 2, 2, 2, 2);
+  document.set_nested_table_cell(0, 2, 2, 0, 0, 0, "N11");
+  document.set_nested_table_cell(0, 2, 2, 0, 0, 1, heading_runs);
+  document.add_nested_table_cell_paragraph(0, 2, 2, 0, 1, 0, "N21");
+  document.set_nested_table_cell(0, 2, 2, 0, 1, 1, "N22");
+  document.add_table(1, 2);
+  document.set_table_cell(1, 0, 0, "MergedStart");
+  document.merge_table_cells(1, 0, 0, 0, 1);
+  document.add_table_cell_paragraph(1, 0, 1, "MergedAlias");
 
   const fs::path output = artifact_dir / "api-coverage-generated.docx";
   document.save(output);
@@ -165,15 +182,46 @@ int main() {
   assert(comments[0].initials == "DC");
   assert(reopened.comment_count() == 1);
 
-  assert(tables.size() == 1);
-  assert(tables[0].rows().size() == 2);
-  assert(tables[0].rows()[0].cells().size() == 2);
+  assert(tables.size() == 2);
+  assert(tables[0].row_count() == 3);
+  assert(tables[0].column_count() == 3);
+  assert(tables[0].rows().size() == 3);
+  assert(tables[0].rows()[0].cells().size() == 3);
   assert(tables[0].rows()[0].cells()[0].text() == "A1\nA1 second");
   assert(tables[0].rows()[0].cells()[1].text() == "Plain paragraph");
+  assert(tables[0].rows()[0].cells()[2].text() == "A3");
   assert(tables[0].rows()[0].cells()[0].grid_span() == 1);
   assert(tables[0].rows()[0].cells()[0].vertical_merge().empty());
   assert(tables[0].rows()[1].cells()[0].text() == "Heading Wrapper\nCellLink");
   assert(tables[0].rows()[1].cells()[1].text().empty());
+  assert(tables[0].rows()[1].cells()[2].text() == "B3");
+  assert(tables[0].rows()[2].cells().size() == 3);
+  assert(tables[0].rows()[2].cells()[0].text() == "C1");
+  assert(tables[0].rows()[2].cells()[1].text() == "C2\nC2 second");
+  assert(tables[0].rows()[2].cells()[2].text() == "C3");
+  assert(tables[0].rows()[2].cells()[2].nested_tables().size() == 1);
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows().size() == 2);
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[0].cells().size() == 2);
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[0].cells()[0].text() == "N11");
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[0].cells()[1].text() == "Heading Wrapper");
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[1].cells()[0].text() == "N21");
+  assert(tables[0].rows()[2].cells()[2].nested_tables()[0].rows()[1].cells()[1].text() == "N22");
+  assert(tables[0].cell(2, 2).text() == "C3");
+  assert(tables[0].cell(2, 2).nested_tables().size() == 1);
+  assert(tables[0].cell(2, 2).nested_tables()[0].row_count() == 2);
+  assert(tables[0].cell(2, 2).nested_tables()[0].column_count() == 2);
+  assert(tables[0].cell(2, 2).nested_tables()[0].cell(0, 0).text() == "N11");
+  assert(tables[0].cell(2, 2).nested_tables()[0].cell(0, 1).text() == "Heading Wrapper");
+  assert(tables[0].cell(2, 2).nested_tables()[0].cell(1, 0).text() == "N21");
+  assert(tables[0].cell(2, 2).nested_tables()[0].cell(1, 1).text() == "N22");
+  assert(tables[1].rows().size() == 1);
+  assert(tables[1].rows()[0].cells().size() == 1);
+  assert(tables[1].rows()[0].cells()[0].grid_span() == 2);
+  assert(tables[1].rows()[0].cells()[0].text() == "MergedStart\nMergedAlias");
+  assert(tables[1].row_count() == 1);
+  assert(tables[1].column_count() == 2);
+  assert(tables[1].cell(0, 0).text() == "MergedStart\nMergedAlias");
+  assert(tables[1].cell(0, 1).text() == "MergedStart\nMergedAlias");
   assert(sections.size() == 1);
   assert(sections[0].page_size_pt().width_pt == 612);
   assert(sections[0].page_size_pt().height_pt == 792);
@@ -420,6 +468,22 @@ int main() {
   threw = false;
   try {
     document.set_paragraph_line_spacing_pt(0, 0);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  assert(threw);
+
+  threw = false;
+  try {
+    document.set_paragraph_line_spacing(0, 0.0, docxcpp::LineSpacingMode::Multiple);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  assert(threw);
+
+  threw = false;
+  try {
+    document.set_paragraph_tab_stops(0, {docxcpp::TabStop{0}});
   } catch (const std::invalid_argument&) {
     threw = true;
   }

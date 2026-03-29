@@ -11,6 +11,43 @@ namespace docxcpp {
 
 namespace {
 
+constexpr double kAutoLineUnit = 240.0;
+
+TabAlignment tab_alignment_from_value_local(std::string_view value) {
+  if (value == "center") {
+    return TabAlignment::Center;
+  }
+  if (value == "right") {
+    return TabAlignment::Right;
+  }
+  if (value == "decimal") {
+    return TabAlignment::Decimal;
+  }
+  if (value == "bar") {
+    return TabAlignment::Bar;
+  }
+  return TabAlignment::Left;
+}
+
+TabLeader tab_leader_from_value_local(std::string_view value) {
+  if (value == "dot") {
+    return TabLeader::Dots;
+  }
+  if (value == "hyphen") {
+    return TabLeader::Dashes;
+  }
+  if (value == "underscore") {
+    return TabLeader::Lines;
+  }
+  if (value == "heavy") {
+    return TabLeader::Heavy;
+  }
+  if (value == "middleDot") {
+    return TabLeader::MiddleDot;
+  }
+  return TabLeader::Spaces;
+}
+
 pugi::xml_node child_named_local(const pugi::xml_node& parent, const char* name) {
   for (const pugi::xml_node& child : parent.children()) {
     if (std::string_view(child.name()) == name) {
@@ -134,7 +171,27 @@ ParagraphFormat read_paragraph_format_from_xml(const pugi::xml_node& paragraph) 
     format.space_before_pt = twips_attr_to_pt_local(spacing, "w:before");
     format.space_after_pt = twips_attr_to_pt_local(spacing, "w:after");
     if (const pugi::xml_attribute line = spacing.attribute("w:line")) {
-      format.line_spacing_pt = line.as_int() / 20;
+      const std::string_view rule = spacing.attribute("w:lineRule").value();
+      if (rule == "auto") {
+        format.line_spacing_mode = LineSpacingMode::Multiple;
+        format.line_spacing_multiple = static_cast<double>(line.as_int()) / kAutoLineUnit;
+      } else if (rule == "atLeast") {
+        format.line_spacing_mode = LineSpacingMode::AtLeast;
+        format.line_spacing_pt = line.as_int() / 20;
+      } else {
+        format.line_spacing_mode = LineSpacingMode::Exact;
+        format.line_spacing_pt = line.as_int() / 20;
+      }
+    }
+  }
+
+  if (const pugi::xml_node tabs = child_named_local(p_pr, "w:tabs")) {
+    for (const pugi::xml_node& tab : tabs.children("w:tab")) {
+      if (const pugi::xml_attribute pos = tab.attribute("w:pos")) {
+        format.tab_stops.push_back(TabStop{pos.as_int() / 20,
+                                           tab_alignment_from_value_local(tab.attribute("w:val").value()),
+                                           tab_leader_from_value_local(tab.attribute("w:leader").value())});
+      }
     }
   }
 

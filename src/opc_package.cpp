@@ -111,6 +111,15 @@ bool OpcPackage::has_entry(const std::string& name) const noexcept {
   return entries_.find(name) != entries_.end();
 }
 
+std::vector<std::string> OpcPackage::entry_names() const {
+  std::vector<std::string> names;
+  names.reserve(entries_.size());
+  for (const auto& [name, _] : entries_) {
+    names.push_back(name);
+  }
+  return names;
+}
+
 void OpcPackage::set_entry(std::string name, std::vector<std::uint8_t> bytes) {
   entries_[std::move(name)] = std::move(bytes);
 }

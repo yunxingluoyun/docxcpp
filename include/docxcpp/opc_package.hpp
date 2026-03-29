@@ -17,6 +17,7 @@ public:
 
   const std::vector<std::uint8_t>& entry(const std::string& name) const;
   bool has_entry(const std::string& name) const noexcept;
+  std::vector<std::string> entry_names() const;
   void set_entry(std::string name, std::vector<std::uint8_t> bytes);
   void save(const std::filesystem::path& path) const;
 

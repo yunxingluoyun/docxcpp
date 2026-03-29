@@ -40,6 +40,14 @@ pugi::xml_node document_sect_pr_local(pugi::xml_document& xml) {
   return sect_pr;
 }
 
+pugi::xml_node get_or_add_child_local(pugi::xml_node parent, const char* name) {
+  pugi::xml_node child = child_named_local(parent, name);
+  if (!child) {
+    child = parent.append_child(name);
+  }
+  return child;
+}
+
 const char* orientation_value_local(PageOrientation orientation) {
   switch (orientation) {
     case PageOrientation::Landscape:
@@ -107,14 +115,10 @@ std::vector<Section> read_sections_from_xml(const pugi::xml_document& xml) {
   return sections;
 }
 
-void set_page_size_pt_in_xml(pugi::xml_document& xml, int width_pt, int height_pt) {
-  pugi::xml_node sect_pr = document_sect_pr_local(xml);
-  pugi::xml_node pg_sz = child_named_local(sect_pr, "w:pgSz");
-  if (!pg_sz) {
-    pg_sz = sect_pr.append_child("w:pgSz");
-  }
-  const auto width_twips = std::to_string(width_pt * kTwipsPerPoint);
-  const auto height_twips = std::to_string(height_pt * kTwipsPerPoint);
+void set_section_properties_in_xml(pugi::xml_node sect_pr, const Section& section) {
+  pugi::xml_node pg_sz = get_or_add_child_local(sect_pr, "w:pgSz");
+  const auto width_twips = std::to_string(section.page_size_pt().width_pt * kTwipsPerPoint);
+  const auto height_twips = std::to_string(section.page_size_pt().height_pt * kTwipsPerPoint);
   if (pg_sz.attribute("w:w")) {
     pg_sz.attribute("w:w").set_value(width_twips.c_str());
   } else {
@@ -125,30 +129,15 @@ void set_page_size_pt_in_xml(pugi::xml_document& xml, int width_pt, int height_p
   } else {
     pg_sz.append_attribute("w:h").set_value(height_twips.c_str());
   }
-}
-
-void set_page_orientation_in_xml(pugi::xml_document& xml, PageOrientation orientation) {
-  pugi::xml_node sect_pr = document_sect_pr_local(xml);
-  pugi::xml_node pg_sz = child_named_local(sect_pr, "w:pgSz");
-  if (!pg_sz) {
-    pg_sz = sect_pr.append_child("w:pgSz");
-  }
-  const char* value = orientation_value_local(orientation);
+  const char* orientation = orientation_value_local(section.page_orientation());
   if (pg_sz.attribute("w:orient")) {
-    pg_sz.attribute("w:orient").set_value(value);
+    pg_sz.attribute("w:orient").set_value(orientation);
   } else {
-    pg_sz.append_attribute("w:orient").set_value(value);
-  }
-}
-
-void set_page_margins_pt_in_xml(pugi::xml_document& xml, const PageMargins& margins) {
-  pugi::xml_node sect_pr = document_sect_pr_local(xml);
-  pugi::xml_node pg_mar = child_named_local(sect_pr, "w:pgMar");
-  if (!pg_mar) {
-    pg_mar = sect_pr.append_child("w:pgMar");
+    pg_sz.append_attribute("w:orient").set_value(orientation);
   }
 
-  auto set_attr = [&](const char* name, int pt_value) {
+  pugi::xml_node pg_mar = get_or_add_child_local(sect_pr, "w:pgMar");
+  auto set_margin_attr = [&](const char* name, int pt_value) {
     const auto twips = std::to_string(pt_value * kTwipsPerPoint);
     if (pg_mar.attribute(name)) {
       pg_mar.attribute(name).set_value(twips.c_str());
@@ -157,13 +146,38 @@ void set_page_margins_pt_in_xml(pugi::xml_document& xml, const PageMargins& marg
     }
   };
 
-  set_attr("w:top", margins.top_pt);
-  set_attr("w:right", margins.right_pt);
-  set_attr("w:bottom", margins.bottom_pt);
-  set_attr("w:left", margins.left_pt);
-  set_attr("w:header", margins.header_pt);
-  set_attr("w:footer", margins.footer_pt);
-  set_attr("w:gutter", margins.gutter_pt);
+  const PageMargins& margins = section.page_margins_pt();
+  set_margin_attr("w:top", margins.top_pt);
+  set_margin_attr("w:right", margins.right_pt);
+  set_margin_attr("w:bottom", margins.bottom_pt);
+  set_margin_attr("w:left", margins.left_pt);
+  set_margin_attr("w:header", margins.header_pt);
+  set_margin_attr("w:footer", margins.footer_pt);
+  set_margin_attr("w:gutter", margins.gutter_pt);
+}
+
+void set_page_size_pt_in_xml(pugi::xml_document& xml, int width_pt, int height_pt) {
+  pugi::xml_node sect_pr = document_sect_pr_local(xml);
+  Section section = section_from_sect_pr_local(sect_pr);
+  PageSize size = section.page_size_pt();
+  size.width_pt = width_pt;
+  size.height_pt = height_pt;
+  set_section_properties_in_xml(sect_pr,
+                                Section(size, section.page_orientation(), section.page_margins_pt()));
+}
+
+void set_page_orientation_in_xml(pugi::xml_document& xml, PageOrientation orientation) {
+  pugi::xml_node sect_pr = document_sect_pr_local(xml);
+  Section section = section_from_sect_pr_local(sect_pr);
+  set_section_properties_in_xml(sect_pr,
+                                Section(section.page_size_pt(), orientation, section.page_margins_pt()));
+}
+
+void set_page_margins_pt_in_xml(pugi::xml_document& xml, const PageMargins& margins) {
+  pugi::xml_node sect_pr = document_sect_pr_local(xml);
+  Section section = section_from_sect_pr_local(sect_pr);
+  set_section_properties_in_xml(sect_pr,
+                                Section(section.page_size_pt(), section.page_orientation(), margins));
 }
 
 PageSize read_page_size_pt_from_xml(const pugi::xml_document& xml) {

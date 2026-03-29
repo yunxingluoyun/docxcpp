@@ -1,2 +1,5 @@
 3rdparty/.DS_Store
 .DS_Store
+build/
+.claude/
+.qtcreator/

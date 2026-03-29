@@ -13,6 +13,7 @@
 #include "pugixml.hpp"
 
 #include "internal/document_model_support.hpp"
+#include "internal/header_footer_support.hpp"
 #include "internal/hyperlink_comment_support.hpp"
 #include "internal/layout_support.hpp"
 #include "internal/media_support.hpp"
@@ -46,6 +47,10 @@ bool needs_preserve_space(const std::string& text) {
 }
 
 pugi::xml_node child_named(const pugi::xml_node& parent, const char* name);
+std::size_t count_named_children(pugi::xml_node parent, const char* name);
+Table table_from_xml(const pugi::xml_node& table_node);
+Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_t cols,
+                             pugi::xml_node insert_before = {});
 
 const char* alignment_value(ParagraphAlignment alignment) {
   switch (alignment) {
@@ -132,6 +137,9 @@ std::string normalized_highlight(std::string value) {
 
 void collect_text(const pugi::xml_node& node, std::string& text) {
   const std::string_view name = node.name();
+  if (name == "w:pPr" || name == "w:rPr") {
+    return;
+  }
   if (name == "w:t") {
     text += node.text().get();
   } else if (name == "w:tab") {
@@ -217,12 +225,133 @@ pugi::xml_node require_row_node(pugi::xml_node table, std::size_t row_index) {
   return row;
 }
 
-pugi::xml_node require_cell_node(pugi::xml_node row, std::size_t col_index) {
-  pugi::xml_node cell = nth_child_named(row, "w:tc", col_index);
+pugi::xml_node cell_properties_node(pugi::xml_node cell) { return child_named(cell, "w:tcPr"); }
+
+std::size_t cell_grid_span(pugi::xml_node cell) {
+  if (const pugi::xml_node tc_pr = cell_properties_node(cell)) {
+    if (const pugi::xml_node grid_span_node = child_named(tc_pr, "w:gridSpan")) {
+      return static_cast<std::size_t>(grid_span_node.attribute("w:val").as_uint(1));
+    }
+  }
+  return 1;
+}
+
+pugi::xml_node require_physical_cell_node(pugi::xml_node row, std::size_t physical_index) {
+  pugi::xml_node cell = nth_child_named(row, "w:tc", physical_index);
   if (!cell) {
     throw std::out_of_range("col_index out of range");
   }
   return cell;
+}
+
+pugi::xml_node require_nested_table_node(pugi::xml_node cell, std::size_t nested_table_index) {
+  pugi::xml_node table = nth_child_named(cell, "w:tbl", nested_table_index);
+  if (!table) {
+    throw std::out_of_range("nested_table_index out of range");
+  }
+  return table;
+}
+
+pugi::xml_node require_cell_node(pugi::xml_node row, std::size_t col_index) {
+  std::size_t current_col = 0;
+  for (pugi::xml_node cell : row.children("w:tc")) {
+    const std::size_t span = cell_grid_span(cell);
+    if (col_index < current_col + span) {
+      return cell;
+    }
+    current_col += span;
+  }
+  throw std::out_of_range("col_index out of range");
+}
+
+std::string table_grid_column_width(pugi::xml_node table, std::size_t column_index) {
+  if (const pugi::xml_node grid = child_named(table, "w:tblGrid")) {
+    if (const pugi::xml_node grid_col = nth_child_named(grid, "w:gridCol", column_index)) {
+      const std::string width = grid_col.attribute("w:w").value();
+      if (!width.empty()) {
+        return width;
+      }
+    }
+  }
+  return "2390";
+}
+
+std::size_t table_column_count(pugi::xml_node table) {
+  if (const pugi::xml_node grid = child_named(table, "w:tblGrid")) {
+    const std::size_t grid_count = count_named_children(grid, "w:gridCol");
+    if (grid_count > 0) {
+      return grid_count;
+    }
+  }
+
+  std::size_t max_columns = 0;
+  for (const pugi::xml_node& row : table.children("w:tr")) {
+    std::size_t row_columns = 0;
+    for (const pugi::xml_node& cell : row.children("w:tc")) {
+      std::size_t grid_span = 1;
+      if (const pugi::xml_node tc_pr = child_named(cell, "w:tcPr")) {
+        if (const pugi::xml_node grid_span_node = child_named(tc_pr, "w:gridSpan")) {
+          grid_span = static_cast<std::size_t>(grid_span_node.attribute("w:val").as_uint(1));
+        }
+      }
+      row_columns += grid_span;
+    }
+    max_columns = std::max(max_columns, row_columns);
+  }
+  return max_columns;
+}
+
+pugi::xml_node append_empty_table_cell(pugi::xml_node row, const std::string& width) {
+  pugi::xml_node cell = row.append_child("w:tc");
+  pugi::xml_node tc_pr = cell.append_child("w:tcPr");
+  tc_pr.append_child("w:tcW").append_attribute("w:w").set_value(width.c_str());
+  tc_pr.child("w:tcW").append_attribute("w:type").set_value("dxa");
+  pugi::xml_node paragraph = cell.append_child("w:p");
+  set_paragraph_text_in_xml(paragraph, "");
+  return cell;
+}
+
+void append_table_grid_column(pugi::xml_node table, const std::string& width) {
+  pugi::xml_node grid = child_named(table, "w:tblGrid");
+  if (!grid) {
+    grid = table.prepend_child("w:tblGrid");
+  }
+  grid.append_child("w:gridCol").append_attribute("w:w").set_value(width.c_str());
+}
+
+Table create_table_in_parent(pugi::xml_node parent, std::size_t rows, std::size_t cols,
+                             pugi::xml_node insert_before) {
+  if (rows == 0 || cols == 0) {
+    throw std::invalid_argument("table rows and cols must be greater than zero");
+  }
+
+  pugi::xml_node table = insert_before ? parent.insert_child_before("w:tbl", insert_before)
+                                       : parent.append_child("w:tbl");
+  pugi::xml_node properties = table.append_child("w:tblPr");
+  pugi::xml_node style = properties.append_child("w:tblStyle");
+  style.append_attribute("w:val").set_value(kTableStyleValue);
+  properties.append_child("w:tblW").append_attribute("w:w").set_value("0");
+  properties.child("w:tblW").append_attribute("w:type").set_value("auto");
+
+  pugi::xml_node grid = table.append_child("w:tblGrid");
+  for (std::size_t col = 0; col < cols; ++col) {
+    grid.append_child("w:gridCol").append_attribute("w:w").set_value("2390");
+  }
+
+  std::vector<TableRow> table_rows;
+  table_rows.reserve(rows);
+  for (std::size_t row_index = 0; row_index < rows; ++row_index) {
+    pugi::xml_node row = table.append_child("w:tr");
+    std::vector<TableCell> table_cells;
+    table_cells.reserve(cols);
+    for (std::size_t col_index = 0; col_index < cols; ++col_index) {
+      append_empty_table_cell(row, table_grid_column_width(table, col_index));
+      table_cells.emplace_back("");
+    }
+    table_rows.emplace_back(std::move(table_cells));
+  }
+
+  return Table(std::move(table_rows));
 }
 
 pugi::xml_node get_or_add_child(pugi::xml_node parent, const char* name) {
@@ -389,7 +518,12 @@ Table table_from_xml(const pugi::xml_node& table_node) {
     std::vector<TableCell> cells;
     for (const pugi::xml_node& cell_node : row_node.children("w:tc")) {
       std::string cell_text;
+      std::vector<Table> nested_tables;
       for (const pugi::xml_node& child : cell_node.children()) {
+        if (std::string_view(child.name()) == "w:tbl") {
+          nested_tables.push_back(table_from_xml(child));
+          continue;
+        }
         if (std::string_view(child.name()) != "w:p") {
           continue;
         }
@@ -400,12 +534,9 @@ Table table_from_xml(const pugi::xml_node& table_node) {
         }
         cell_text += paragraph_text;
       }
-      std::size_t grid_span = 1;
+      std::size_t grid_span = cell_grid_span(cell_node);
       std::string vertical_merge;
-      if (const pugi::xml_node tc_pr = child_named(cell_node, "w:tcPr")) {
-        if (const pugi::xml_node grid_span_node = child_named(tc_pr, "w:gridSpan")) {
-          grid_span = static_cast<std::size_t>(grid_span_node.attribute("w:val").as_uint(1));
-        }
+      if (const pugi::xml_node tc_pr = cell_properties_node(cell_node)) {
         if (const pugi::xml_node v_merge_node = child_named(tc_pr, "w:vMerge")) {
           vertical_merge = v_merge_node.attribute("w:val").value();
           if (vertical_merge.empty()) {
@@ -413,7 +544,7 @@ Table table_from_xml(const pugi::xml_node& table_node) {
           }
         }
       }
-      cells.emplace_back(cell_text, grid_span, vertical_merge);
+      cells.emplace_back(cell_text, grid_span, vertical_merge, std::move(nested_tables));
     }
     rows.emplace_back(std::move(cells));
   }
@@ -699,42 +830,68 @@ Paragraph Document::add_styled_heading(const std::string& text, int level, const
 }
 
 Table Document::add_table(std::size_t rows, std::size_t cols) {
-  if (rows == 0 || cols == 0) {
-    throw std::invalid_argument("table rows and cols must be greater than zero");
-  }
-
-  pugi::xml_node table = append_block_before_section(document_body(*xml_), "w:tbl");
-  pugi::xml_node properties = table.append_child("w:tblPr");
-  pugi::xml_node style = properties.append_child("w:tblStyle");
-  style.append_attribute("w:val").set_value(kTableStyleValue);
-  properties.append_child("w:tblW").append_attribute("w:w").set_value("0");
-  properties.child("w:tblW").append_attribute("w:type").set_value("auto");
-
-  pugi::xml_node grid = table.append_child("w:tblGrid");
-  for (std::size_t col = 0; col < cols; ++col) {
-    grid.append_child("w:gridCol").append_attribute("w:w").set_value("2390");
-  }
-
-  std::vector<TableRow> table_rows;
-  table_rows.reserve(rows);
-  for (std::size_t row_index = 0; row_index < rows; ++row_index) {
-    pugi::xml_node row = table.append_child("w:tr");
-    std::vector<TableCell> table_cells;
-    table_cells.reserve(cols);
-    for (std::size_t col_index = 0; col_index < cols; ++col_index) {
-      pugi::xml_node cell = row.append_child("w:tc");
-      pugi::xml_node tc_pr = cell.append_child("w:tcPr");
-      tc_pr.append_child("w:tcW").append_attribute("w:w").set_value("2390");
-      tc_pr.child("w:tcW").append_attribute("w:type").set_value("dxa");
-      pugi::xml_node paragraph = cell.append_child("w:p");
-      set_paragraph_text_in_xml(paragraph, "");
-      table_cells.emplace_back("");
-    }
-    table_rows.emplace_back(std::move(table_cells));
-  }
-
+  Table result = create_table_in_parent(document_body(*xml_), rows, cols,
+                                        child_named(document_body(*xml_), "w:sectPr"));
   dirty_ = true;
-  return Table(std::move(table_rows));
+  return result;
+}
+
+Table Document::add_nested_table(std::size_t table_index, std::size_t row_index, std::size_t col_index,
+                                 std::size_t rows, std::size_t cols) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+
+  pugi::xml_node trailing_paragraph;
+  if (const pugi::xml_node last_child = cell.last_child();
+      last_child && std::string_view(last_child.name()) == "w:p") {
+    trailing_paragraph = last_child;
+    const bool only_child = cell.first_child() == last_child;
+    const bool empty_text = trailing_paragraph.text().as_string()[0] == '\0' &&
+                            !child_named(trailing_paragraph, "w:r") &&
+                            !child_named(trailing_paragraph, "w:hyperlink");
+    if (only_child && empty_text) {
+      cell.remove_child(trailing_paragraph);
+      trailing_paragraph = {};
+    }
+  }
+
+  Table result = create_table_in_parent(cell, rows, cols, trailing_paragraph);
+  if (!trailing_paragraph) {
+    pugi::xml_node paragraph = cell.append_child("w:p");
+    set_paragraph_text_in_xml(paragraph, "");
+  }
+  dirty_ = true;
+  return result;
+}
+
+void Document::add_table_row(std::size_t table_index) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  const std::size_t cols = table_column_count(table);
+  if (cols == 0) {
+    throw std::out_of_range("table has no columns");
+  }
+
+  pugi::xml_node row = table.append_child("w:tr");
+  for (std::size_t col_index = 0; col_index < cols; ++col_index) {
+    append_empty_table_cell(row, table_grid_column_width(table, col_index));
+  }
+  dirty_ = true;
+}
+
+void Document::add_table_column(std::size_t table_index) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  const std::size_t previous_cols = table_column_count(table);
+  if (previous_cols == 0) {
+    throw std::out_of_range("table has no columns");
+  }
+
+  const std::string width = table_grid_column_width(table, previous_cols - 1);
+  append_table_grid_column(table, width);
+  for (pugi::xml_node row : table.children("w:tr")) {
+    append_empty_table_cell(row, width);
+  }
+  dirty_ = true;
 }
 
 void Document::set_table_cell(std::size_t table_index, std::size_t row_index, std::size_t col_index,
@@ -760,6 +917,44 @@ void Document::set_table_cell(std::size_t table_index, std::size_t row_index, st
   pugi::xml_node paragraph = child_named(cell, "w:p");
   if (!paragraph) {
     paragraph = cell.append_child("w:p");
+  }
+  set_paragraph_runs_in_xml(paragraph, runs);
+  dirty_ = true;
+}
+
+void Document::set_nested_table_cell(std::size_t table_index, std::size_t row_index,
+                                     std::size_t col_index, std::size_t nested_table_index,
+                                     std::size_t nested_row_index, std::size_t nested_col_index,
+                                     const std::string& text) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  pugi::xml_node nested_table = require_nested_table_node(cell, nested_table_index);
+  pugi::xml_node nested_row = require_row_node(nested_table, nested_row_index);
+  pugi::xml_node nested_cell = require_cell_node(nested_row, nested_col_index);
+
+  pugi::xml_node paragraph = child_named(nested_cell, "w:p");
+  if (!paragraph) {
+    paragraph = nested_cell.append_child("w:p");
+  }
+  set_paragraph_text_in_xml(paragraph, text);
+  dirty_ = true;
+}
+
+void Document::set_nested_table_cell(std::size_t table_index, std::size_t row_index,
+                                     std::size_t col_index, std::size_t nested_table_index,
+                                     std::size_t nested_row_index, std::size_t nested_col_index,
+                                     const std::vector<Run>& runs) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  pugi::xml_node nested_table = require_nested_table_node(cell, nested_table_index);
+  pugi::xml_node nested_row = require_row_node(nested_table, nested_row_index);
+  pugi::xml_node nested_cell = require_cell_node(nested_row, nested_col_index);
+
+  pugi::xml_node paragraph = child_named(nested_cell, "w:p");
+  if (!paragraph) {
+    paragraph = nested_cell.append_child("w:p");
   }
   set_paragraph_runs_in_xml(paragraph, runs);
   dirty_ = true;
@@ -796,6 +991,46 @@ Paragraph Document::add_table_cell_paragraph(std::size_t table_index, std::size_
                                              cell_paragraph_index));
 }
 
+Paragraph Document::add_nested_table_cell_paragraph(std::size_t table_index, std::size_t row_index,
+                                                    std::size_t col_index,
+                                                    std::size_t nested_table_index,
+                                                    std::size_t nested_row_index,
+                                                    std::size_t nested_col_index,
+                                                    const std::string& text) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  pugi::xml_node nested_table = require_nested_table_node(cell, nested_table_index);
+  pugi::xml_node nested_row = require_row_node(nested_table, nested_row_index);
+  pugi::xml_node nested_cell = require_cell_node(nested_row, nested_col_index);
+  pugi::xml_node paragraph = nested_cell.append_child("w:p");
+  set_paragraph_text_in_xml(paragraph, text);
+  dirty_ = true;
+  return Paragraph(text, ParagraphAlignment::Inherit, {}, false, {Run(text, {})}, {}, -1, {}, {},
+                   nullptr);
+}
+
+Paragraph Document::add_nested_table_cell_paragraph(std::size_t table_index, std::size_t row_index,
+                                                    std::size_t col_index,
+                                                    std::size_t nested_table_index,
+                                                    std::size_t nested_row_index,
+                                                    std::size_t nested_col_index,
+                                                    const std::vector<Run>& runs) {
+  pugi::xml_node table = require_table_node(*xml_, table_index);
+  pugi::xml_node row = require_row_node(table, row_index);
+  pugi::xml_node cell = require_cell_node(row, col_index);
+  pugi::xml_node nested_table = require_nested_table_node(cell, nested_table_index);
+  pugi::xml_node nested_row = require_row_node(nested_table, nested_row_index);
+  pugi::xml_node nested_cell = require_cell_node(nested_row, nested_col_index);
+  pugi::xml_node paragraph = nested_cell.append_child("w:p");
+  set_paragraph_runs_in_xml(paragraph, runs);
+  dirty_ = true;
+  Paragraph result = paragraph_from_runs(runs, ParagraphAlignment::Inherit);
+  return Paragraph(result.text(), result.alignment(), result.first_run_style(), result.has_page_break(),
+                   result.runs(), result.style_id(), result.heading_level(), result.format(), {},
+                   nullptr);
+}
+
 void Document::merge_table_cells(std::size_t table_index, std::size_t start_row, std::size_t start_col,
                                  std::size_t end_row, std::size_t end_col) {
   if (end_row < start_row || end_col < start_col) {
@@ -826,7 +1061,7 @@ void Document::merge_table_cells(std::size_t table_index, std::size_t start_row,
       }
 
       for (std::size_t col_index = end_col; col_index > start_col; --col_index) {
-        pugi::xml_node extra_cell = require_cell_node(row, col_index);
+        pugi::xml_node extra_cell = require_physical_cell_node(row, col_index);
         row.remove_child(extra_cell);
       }
     }
@@ -868,6 +1103,122 @@ void Document::set_page_margins_pt(const PageMargins& margins) {
   }
   set_page_margins_pt_in_xml(*xml_, margins);
   dirty_ = true;
+}
+
+void Document::add_section_break() {
+  add_section_break(Section(page_size_pt(), page_orientation(), page_margins_pt()));
+}
+
+void Document::add_section_break(const Section& next_section) {
+  const PageSize& size = next_section.page_size_pt();
+  const PageMargins& margins = next_section.page_margins_pt();
+  if (size.width_pt <= 0 || size.height_pt <= 0) {
+    throw std::invalid_argument("section page size must be greater than zero");
+  }
+  if (margins.top_pt < 0 || margins.right_pt < 0 || margins.bottom_pt < 0 || margins.left_pt < 0 ||
+      margins.header_pt < 0 || margins.footer_pt < 0 || margins.gutter_pt < 0) {
+    throw std::invalid_argument("section page margins cannot be negative");
+  }
+
+  pugi::xml_node body = document_body(*xml_);
+  pugi::xml_node body_sect_pr = child_named(body, "w:sectPr");
+  if (!body_sect_pr) {
+    body_sect_pr = body.append_child("w:sectPr");
+    set_section_properties_in_xml(body_sect_pr,
+                                  Section(page_size_pt(), page_orientation(), page_margins_pt()));
+  }
+
+  pugi::xml_node paragraph = body.insert_child_before("w:p", body_sect_pr);
+  pugi::xml_node p_pr = paragraph.append_child("w:pPr");
+  p_pr.append_copy(body_sect_pr);
+  set_section_properties_in_xml(body_sect_pr, next_section);
+  dirty_ = true;
+}
+
+void Document::set_even_and_odd_headers(bool enabled) {
+  set_even_and_odd_headers_in_settings(package_, enabled);
+  dirty_ = true;
+}
+
+bool Document::even_and_odd_headers() const { return read_even_and_odd_headers_from_settings(package_); }
+
+void Document::set_section_different_first_page(std::size_t section_index, bool enabled) {
+  set_section_different_first_page_in_xml(*xml_, section_index, enabled);
+  dirty_ = true;
+}
+
+bool Document::section_different_first_page(std::size_t section_index) const {
+  return read_section_different_first_page_from_xml(*xml_, section_index);
+}
+
+void Document::clear_header(std::size_t section_index) {
+  clear_section_header(package_, *xml_, section_index, HeaderFooterType::Default);
+  dirty_ = true;
+}
+
+void Document::clear_footer(std::size_t section_index) {
+  clear_section_footer(package_, *xml_, section_index, HeaderFooterType::Default);
+  dirty_ = true;
+}
+
+void Document::set_header_text(std::size_t section_index, const std::string& text, HeaderFooterType type) {
+  set_section_header_text(package_, *xml_, section_index, text, type);
+  dirty_ = true;
+}
+
+void Document::set_footer_text(std::size_t section_index, const std::string& text, HeaderFooterType type) {
+  set_section_footer_text(package_, *xml_, section_index, text, type);
+  dirty_ = true;
+}
+
+Paragraph Document::add_header_paragraph(std::size_t section_index, const std::string& text,
+                                         ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph =
+      add_section_header_paragraph(package_, *xml_, section_index, text, alignment, type);
+  dirty_ = true;
+  return paragraph;
+}
+
+Paragraph Document::add_header_paragraph(std::size_t section_index, const std::vector<Run>& runs,
+                                         ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph =
+      add_section_header_paragraph(package_, *xml_, section_index, runs, alignment, type);
+  dirty_ = true;
+  return paragraph;
+}
+
+Paragraph Document::add_styled_header_paragraph(std::size_t section_index, const std::string& text,
+                                                const RunStyle& style,
+                                                ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph = add_section_styled_header_paragraph(package_, *xml_, section_index, text,
+                                                            style, alignment, type);
+  dirty_ = true;
+  return paragraph;
+}
+
+Paragraph Document::add_footer_paragraph(std::size_t section_index, const std::string& text,
+                                         ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph =
+      add_section_footer_paragraph(package_, *xml_, section_index, text, alignment, type);
+  dirty_ = true;
+  return paragraph;
+}
+
+Paragraph Document::add_footer_paragraph(std::size_t section_index, const std::vector<Run>& runs,
+                                         ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph =
+      add_section_footer_paragraph(package_, *xml_, section_index, runs, alignment, type);
+  dirty_ = true;
+  return paragraph;
+}
+
+Paragraph Document::add_styled_footer_paragraph(std::size_t section_index, const std::string& text,
+                                                const RunStyle& style,
+                                                ParagraphAlignment alignment, HeaderFooterType type) {
+  Paragraph paragraph = add_section_styled_footer_paragraph(package_, *xml_, section_index, text,
+                                                            style, alignment, type);
+  dirty_ = true;
+  return paragraph;
 }
 
 void Document::add_picture(const std::filesystem::path& image_path) {
@@ -1058,6 +1409,24 @@ std::vector<CommentInfo> Document::comments() const {
 }
 
 std::size_t Document::comment_count() const { return comments().size(); }
+
+std::vector<std::string> Document::headers(HeaderFooterType type) const {
+  return read_section_headers(package_, *xml_, type);
+}
+
+std::vector<std::string> Document::footers(HeaderFooterType type) const {
+  return read_section_footers(package_, *xml_, type);
+}
+
+std::vector<Paragraph> Document::header_paragraphs(std::size_t section_index,
+                                                   HeaderFooterType type) const {
+  return read_header_paragraphs(package_, *xml_, section_index, type);
+}
+
+std::vector<Paragraph> Document::footer_paragraphs(std::size_t section_index,
+                                                   HeaderFooterType type) const {
+  return read_footer_paragraphs(package_, *xml_, section_index, type);
+}
 
 std::vector<PictureSize> Document::picture_sizes_pt() const {
   std::vector<PictureSize> result;
