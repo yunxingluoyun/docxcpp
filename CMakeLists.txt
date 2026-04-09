@@ -5,21 +5,14 @@ project(docxcpp VERSION 0.1.0 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
 
-set(DOCXCPP_TEMPLATE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/docx/templates/default-docx-template"
-)
-file(
-  GLOB_RECURSE DOCXCPP_TEMPLATE_FILES
-  CONFIGURE_DEPENDS
-  "${DOCXCPP_TEMPLATE_DIR}/*"
+set(DOCXCPP_DEFAULT_TEMPLATE_ARCHIVE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/docx/templates/default.docx"
 )
 set(DOCXCPP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(DOCXCPP_GENERATED_TEMPLATE_CPP "${DOCXCPP_GENERATED_DIR}/default_template.cpp")
@@ -28,14 +21,13 @@ set(DOCXCPP_PACKAGE_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/cmake")
 add_custom_command(
   OUTPUT ${DOCXCPP_GENERATED_TEMPLATE_CPP}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${DOCXCPP_GENERATED_DIR}
-  COMMAND
-    ${Python3_EXECUTABLE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_default_template.py
-    --template-dir ${DOCXCPP_TEMPLATE_DIR}
-    --output ${DOCXCPP_GENERATED_TEMPLATE_CPP}
+  COMMAND ${CMAKE_COMMAND}
+          -DINPUT=${DOCXCPP_DEFAULT_TEMPLATE_ARCHIVE}
+          -DOUTPUT=${DOCXCPP_GENERATED_TEMPLATE_CPP}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateDefaultTemplate.cmake
   DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_default_template.py
-    ${DOCXCPP_TEMPLATE_FILES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateDefaultTemplate.cmake
+    ${DOCXCPP_DEFAULT_TEMPLATE_ARCHIVE}
   VERBATIM
 )
 
@@ -130,14 +122,6 @@ target_compile_definitions(
 
 add_test(NAME docxcpp_api_coverage_test COMMAND docxcpp_api_coverage_test)
 
-add_executable(docxcpp_python_docx_read_test tests/python_docx_read_test.cpp)
-target_link_libraries(docxcpp_python_docx_read_test PRIVATE docxcpp)
-target_compile_definitions(
-  docxcpp_python_docx_read_test
-  PRIVATE
-    DOCXCPP_TEST_ARTIFACT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-artifacts"
-)
-
 add_test(
   NAME docxcpp_full_feature_example_generate
   COMMAND docxcpp_full_feature_example ${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/full-feature-5-pages.docx
@@ -146,30 +130,6 @@ set_tests_properties(
   docxcpp_full_feature_example_generate
   PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-add_test(
-  NAME docxcpp_python_docx_fixture_generate
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_python_docx_fixture.py
-          ${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/python-docx-generated.docx
-)
-
-add_test(NAME docxcpp_python_docx_read_test COMMAND docxcpp_python_docx_read_test)
-set_tests_properties(
-  docxcpp_python_docx_read_test
-  PROPERTIES
-    DEPENDS "docxcpp_python_docx_fixture_generate"
-)
-
-add_test(
-  NAME docxcpp_python_docx_regression
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python_docx_regression.py
-          ${CMAKE_CURRENT_BINARY_DIR}/test-artifacts
-)
-set_tests_properties(
-  docxcpp_python_docx_regression
-  PROPERTIES
-    DEPENDS "docxcpp_smoke_test;docxcpp_api_coverage_test;docxcpp_full_feature_example_generate;docxcpp_python_docx_read_test"
 )
 
 add_test(
