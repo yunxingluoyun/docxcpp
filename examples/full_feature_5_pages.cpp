@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 
   const fs::path output =
       argc > 1 ? fs::path(argv[1]) : fs::path("full-feature-5-pages.docx");
-  const fs::path image_path = fs::path("cpp") / "image.jpeg";
+  const fs::path image_path = fs::path(".") / "image.jpeg";
   const auto image_bytes = read_bytes(image_path);
 
   docxcpp::Document document;

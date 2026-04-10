@@ -31,6 +31,8 @@ add_custom_command(
   VERBATIM
 )
 
+
+
 add_library(
   docxcpp
   ${DOCXCPP_GENERATED_TEMPLATE_CPP}
@@ -48,7 +50,14 @@ add_library(
   3rdparty/pugixml-1.13/pugixml.cpp
 )
 
+if(MSVC)
+    add_compile_definitions(_UNICODE UNICODE)
+    target_compile_options(docxcpp PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+
 add_library(docxcpp::docxcpp ALIAS docxcpp)
+
 
 target_include_directories(
   docxcpp
@@ -92,6 +101,18 @@ target_link_libraries(docxcpp_sections_headers_footers_example PRIVATE docxcpp)
 add_executable(docxcpp_styles_and_tables_example examples/styles_and_tables.cpp)
 target_link_libraries(docxcpp_styles_and_tables_example PRIVATE docxcpp)
 
+if(MSVC)
+    target_compile_options(docxcpp_example PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp_example PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_options(docxcpp_full_feature_example PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp_full_feature_example PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_options(docxcpp_read_existing_example PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp_read_existing_example PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_options(docxcpp_sections_headers_footers_example PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp_sections_headers_footers_example PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    target_compile_options(docxcpp_styles_and_tables_example PRIVATE /utf-8 /Zc:__cplusplus)
+    target_compile_definitions(docxcpp_styles_and_tables_example PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
 enable_testing()
 
 add_executable(docxcpp_smoke_test tests/smoke_test.cpp)

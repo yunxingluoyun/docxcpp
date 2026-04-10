@@ -4,3 +4,4 @@ build/
 build-shared/
 .claude/
 .qtcreator/
+out/
