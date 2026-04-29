@@ -39,7 +39,7 @@ tests/              测试（含 python-docx 回归验证）
 其中：
 
 - `pugixml` 和 `miniz` 已内置在仓库 `3rdparty/` 目录中，不需要额外安装
-- Python 3 主要用于构建时生成内嵌默认模板，以及运行部分测试
+- Python 3 主要用于运行部分测试
 - 如果只是在你自己的项目里链接已安装好的 `docxcpp`，则不需要额外再关心 `pugixml` 和 `miniz`
 
 ## 库构建
